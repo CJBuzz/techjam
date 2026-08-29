@@ -1,0 +1,38 @@
+# Virtual environments and package-manager caches
+.venv/
+.uv-cache/
+.hf-cache/
+.torch-cache/
+
+# Python bytecode and tool caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Packaging outputs
+build/
+dist/
+*.egg-info/
+
+# Local datasets, trained models, and generated predictions
+data/
+artifacts/
+predictions.json
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*~
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
