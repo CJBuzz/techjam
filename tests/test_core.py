@@ -8,7 +8,7 @@ import torch
 from PIL import Image
 
 from aigc_detector.data import RobustTransform, load_labeled_paths, stratified_split, stratified_train_val_test_split
-from aigc_detector.model import FusionHead, ModelConfig
+from aigc_detector.model import FrozenEncoders, FusionHead, ModelConfig
 
 
 class CoreTests(unittest.TestCase):
@@ -43,6 +43,12 @@ class CoreTests(unittest.TestCase):
         combined = ModelConfig(forensic_mode="laplacian_fft", forensic_dim=2560)
         output = FusionHead(combined)(torch.zeros(3, combined.clip_dim + combined.forensic_dim))
         self.assertEqual(tuple(output.shape), (3,))
+
+    def test_fft_forensic_view_is_finite_and_normalized_shape(self) -> None:
+        image_batch = torch.rand(2, 3, 32, 48)
+        view = FrozenEncoders._fft_tensor(image_batch, torch.device("cpu"))
+        self.assertEqual(tuple(view.shape), (2, 3, 32, 48))
+        self.assertTrue(torch.isfinite(view).all())
 
     def test_source_stratified_three_way_split_is_disjoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

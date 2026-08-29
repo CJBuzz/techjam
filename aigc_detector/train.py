@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from .data import load_labeled_paths, stratified_train_val_test_split
 from .features import extract_features
 from .metrics import classification_metrics, fit_temperature
-from .model import FrozenEncoders, FusionHead, ModelConfig, save_checkpoint
+from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, save_checkpoint
 
 
 def parse_args() -> argparse.Namespace:
@@ -34,6 +34,18 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--modality-dropout", type=float, default=0.0, help="Chance of zeroing CLIP or forensic features per head batch"
+    )
+    parser.add_argument(
+        "--fft-dropout",
+        type=float,
+        default=0.0,
+        help="For laplacian_fft only: chance of masking the FFT feature block per training sample",
+    )
+    parser.add_argument(
+        "--initialize-from-laplacian",
+        type=Path,
+        default=None,
+        help="Initialize a laplacian_fft head from a compatible Laplacian checkpoint with zero FFT weights",
     )
     parser.add_argument("--feature-batch-size", type=int, default=8)
     parser.add_argument("--head-batch-size", type=int, default=32)
@@ -63,6 +75,10 @@ def main() -> None:
     )
     if not 0.0 <= args.modality_dropout < 1.0:
         raise ValueError("--modality-dropout must be in [0, 1)")
+    if not 0.0 <= args.fft_dropout < 1.0:
+        raise ValueError("--fft-dropout must be in [0, 1)")
+    if args.fft_dropout and args.forensic_mode != "laplacian_fft":
+        raise ValueError("--fft-dropout requires --forensic-mode laplacian_fft")
     forensic_dim = 2560 if args.forensic_mode == "laplacian_fft" else 1280
     config = ModelConfig(forensic_mode=args.forensic_mode, forensic_dim=forensic_dim)
 
@@ -111,6 +127,22 @@ def main() -> None:
         del encoders
 
     head = FusionHead(config).to(device)
+    if args.initialize_from_laplacian:
+        if args.forensic_mode != "laplacian_fft":
+            raise ValueError("--initialize-from-laplacian requires --forensic-mode laplacian_fft")
+        source_head, source_config, _, _ = load_checkpoint(args.initialize_from_laplacian, torch.device("cpu"))
+        if source_config.forensic_mode != "laplacian" or source_config.clip_dim != config.clip_dim:
+            raise ValueError("Initialization checkpoint must use the compatible Laplacian encoder")
+        source_state = source_head.state_dict()
+        target_state = head.state_dict()
+        for key, source_value in source_state.items():
+            if key == "network.0.weight":
+                target_state[key].zero_()
+                target_state[key][:, : source_value.shape[1]].copy_(source_value)
+            elif target_state[key].shape == source_value.shape:
+                target_state[key].copy_(source_value)
+        head.load_state_dict(target_state)
+        print(f"Initialized CLIP+Laplacian head weights from: {args.initialize_from_laplacian}")
     optimizer = torch.optim.AdamW(head.parameters(), lr=args.learning_rate, weight_decay=1e-4)
     criterion = torch.nn.BCEWithLogitsLoss()
     loader = DataLoader(TensorDataset(train_x, train_y), batch_size=args.head_batch_size, shuffle=True)
@@ -126,6 +158,10 @@ def main() -> None:
                 drop_forensic = (~drop_clip) & (torch.rand(len(features)) < (args.modality_dropout / 2))
                 features[drop_clip, : config.clip_dim] = 0
                 features[drop_forensic, config.clip_dim :] = 0
+            if args.fft_dropout > 0:
+                fft_start = config.clip_dim + 1280
+                drop_fft = torch.rand(len(features)) < args.fft_dropout
+                features[drop_fft, fft_start:] = 0
             optimizer.zero_grad(set_to_none=True)
             loss = criterion(head(features.to(device)), labels.to(device))
             loss.backward()
@@ -171,6 +207,8 @@ def main() -> None:
         "augmentation_repeats": args.augmentation_repeats,
         "augmentation_depth": args.augmentation_depth,
         "modality_dropout": args.modality_dropout,
+        "fft_dropout": args.fft_dropout,
+        "initialized_from_laplacian": str(args.initialize_from_laplacian) if args.initialize_from_laplacian else None,
         "validation_metrics": metrics,
         **({"test_metrics": test_metrics} if test_metrics is not None else {}),
     }
