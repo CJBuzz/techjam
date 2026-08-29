@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 aigc-train = "aigc_detector.train:main"
+aigc-train-mixture = "aigc_detector.train_mixture:main"
 aigc-predict = "aigc_detector.predict:main"
 aigc-evaluate = "aigc_detector.evaluate:main"
 

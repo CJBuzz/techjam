@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hashlib
 import random
 from pathlib import Path
 from typing import Callable, Iterable
@@ -151,6 +152,38 @@ class RobustTransform:
         crop_w, crop_h = round(image.width * 0.8), round(image.height * 0.8)
         left, top = (image.width - crop_w) // 2, (image.height - crop_h) // 2
         return image.crop((left, top, left + crop_w, top + crop_h)).resize(image.size, Image.Resampling.BICUBIC)
+
+
+BALANCED_TRANSFORM_GROUPS = (
+    "jpeg", "blur", "resize", "noise", "color", "crop",
+    "resize+jpeg", "blur+jpeg", "crop+resize", "color+jpeg", "noise+jpeg",
+)
+
+
+class DeterministicTransform:
+    """Apply a reproducible transform chain without perturbing global RNG state."""
+
+    def __init__(self, group: str, seed: int, path: str, repeat: int) -> None:
+        operations = tuple(group.split("+"))
+        if not operations or any(operation not in RobustTransform.names for operation in operations):
+            raise ValueError(f"Unknown transform group {group!r}")
+        digest = hashlib.sha256(f"{seed}\0{path}\0{repeat}".encode()).digest()
+        self.seed = int.from_bytes(digest[:8], "big") % (2**32)
+        self.operations = operations
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        python_state = random.getstate()
+        numpy_state = np.random.get_state()
+        try:
+            random.seed(self.seed)
+            np.random.seed(self.seed)
+            image = image.convert("RGB")
+            for operation in self.operations:
+                image = RobustTransform._apply_one(image, operation)
+            return image
+        finally:
+            random.setstate(python_state)
+            np.random.set_state(numpy_state)
 
 
 class ImagePathDataset(Dataset):

@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import numpy as np
 from PIL import Image
 from torchvision.models import EfficientNet_B0_Weights, efficientnet_b0
 from transformers import AutoImageProcessor, CLIPVisionModelWithProjection
@@ -28,6 +29,39 @@ class ModelConfig:
     clip_dim: int = 512
     forensic_dim: int = 1280
     forensic_mode: str = "laplacian"
+    head_type: str = "fusion"
+    gate_mode: str = "features"
+    quality_dim: int = 0
+
+
+def image_quality_statistics(images: list[Image.Image]) -> torch.Tensor:
+    """Six inexpensive pre-encoder quality descriptors, standardized to stable ranges."""
+    rows = []
+    for image in images:
+        gray_image = image.convert("L")
+        width, height = gray_image.size
+        scale = min(1.0, 256.0 / max(width, height))
+        if scale < 1.0:
+            gray_image = gray_image.resize((max(8, round(width * scale)), max(8, round(height * scale))), Image.Resampling.BILINEAR)
+        gray = np.asarray(gray_image, dtype=np.float32) / 255.0
+        lap = -4 * gray + np.roll(gray, 1, 0) + np.roll(gray, -1, 0) + np.roll(gray, 1, 1) + np.roll(gray, -1, 1)
+        lap_energy = float(np.log1p(1000 * np.var(lap[1:-1, 1:-1])))
+        spectrum = np.abs(np.fft.fftshift(np.fft.fft2((gray - gray.mean()) * np.outer(np.hanning(gray.shape[0]), np.hanning(gray.shape[1]))))) ** 2
+        yy, xx = np.indices(gray.shape)
+        radius = np.sqrt(((yy - (gray.shape[0] - 1) / 2) / max(gray.shape[0], 1)) ** 2 + ((xx - (gray.shape[1] - 1) / 2) / max(gray.shape[1], 1)) ** 2)
+        low = float(spectrum[radius < 0.12].mean()) + 1e-8
+        high = float(spectrum[radius > 0.3].mean()) + 1e-8
+        hf_ratio = float(np.clip(np.log(high / low + 1e-8), -12, 4) / 8)
+        bins = np.linspace(0.03, 0.5, 12)
+        radial = np.array([spectrum[(radius >= a) & (radius < b)].mean() for a, b in zip(bins[:-1], bins[1:])])
+        slope = float(np.polyfit(np.log((bins[:-1] + bins[1:]) / 2), np.log(radial + 1e-8), 1)[0] / 10)
+        x_boundaries = np.arange(8, gray.shape[1], 8)
+        y_boundaries = np.arange(8, gray.shape[0], 8)
+        vertical = np.abs(gray[:, x_boundaries] - gray[:, x_boundaries - 1]).mean() if len(x_boundaries) else 0.0
+        horizontal = np.abs(gray[y_boundaries, :] - gray[y_boundaries - 1, :]).mean() if len(y_boundaries) else 0.0
+        block_energy = float((vertical + horizontal) * 5)
+        rows.append((lap_energy, hf_ratio, slope, block_energy, np.log2(max(width, height)) / 12, np.log(width / height) / 4))
+    return torch.tensor(rows, dtype=torch.float32)
 
 
 class FrozenEncoders(nn.Module):
@@ -110,7 +144,13 @@ class FrozenEncoders(nn.Module):
         clip_inputs = self.processor(images=images, return_tensors="pt")["pixel_values"].to(self.device)
         clip_features = self.clip(pixel_values=clip_inputs).image_embeds
         forensic_features = self._forensic_features(images)
-        return torch.cat((F.normalize(clip_features, dim=1), forensic_features), dim=1).cpu()
+        features = torch.cat((F.normalize(clip_features, dim=1), forensic_features), dim=1).cpu()
+        if self.config.quality_dim:
+            quality = image_quality_statistics(images)
+            if quality.shape[1] != self.config.quality_dim:
+                raise ValueError(f"quality_dim={self.config.quality_dim}, extracted {quality.shape[1]} statistics")
+            features = torch.cat((features, quality), dim=1)
+        return features
 
 
 class FusionHead(nn.Module):
@@ -132,8 +172,50 @@ class FusionHead(nn.Module):
         return self.network(features).squeeze(1)
 
 
+class ExpertMixtureHead(nn.Module):
+    """Mixture of CLIP+Laplacian and CLIP+FFT experts with an optional gate."""
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        if config.forensic_mode != "laplacian_fft" or config.forensic_dim != 2560:
+            raise ValueError("Expert mixture requires laplacian_fft features")
+        expert_config = ModelConfig(
+            clip_model=config.clip_model, hidden_dim=config.hidden_dim, dropout=config.dropout,
+            clip_dim=config.clip_dim, forensic_dim=1280, forensic_mode="laplacian",
+        )
+        self.config = config
+        self.laplacian_expert = FusionHead(expert_config)
+        self.fft_expert = FusionHead(expert_config)
+        if config.gate_mode in {"features", "quality"}:
+            gate_dim = config.clip_dim + config.forensic_dim + (config.quality_dim if config.gate_mode == "quality" else 0)
+            self.gate = nn.Sequential(
+                nn.LayerNorm(gate_dim), nn.Linear(gate_dim, 32), nn.GELU(), nn.Linear(32, 1),
+            )
+            nn.init.zeros_(self.gate[-1].weight)
+            nn.init.constant_(self.gate[-1].bias, -1.3862944)  # start at 20% FFT
+        elif config.gate_mode != "fixed":
+            raise ValueError(f"Unknown gate mode: {config.gate_mode!r}")
+
+    def expert_logits(self, features: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        clip = features[:, : self.config.clip_dim]
+        laplacian = features[:, self.config.clip_dim : self.config.clip_dim + 1280]
+        fft = features[:, self.config.clip_dim + 1280 : self.config.clip_dim + 2560]
+        return self.laplacian_expert(torch.cat((clip, laplacian), 1)), self.fft_expert(torch.cat((clip, fft), 1))
+
+    def gate_weights(self, features: torch.Tensor) -> torch.Tensor:
+        if self.config.gate_mode == "fixed":
+            return torch.full((len(features),), 0.5, device=features.device)
+        gate_features = features if self.config.gate_mode == "quality" else features[:, : self.config.clip_dim + self.config.forensic_dim]
+        return torch.sigmoid(self.gate(gate_features).squeeze(1))
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        laplacian_logit, fft_logit = self.expert_logits(features)
+        fft_weight = self.gate_weights(features)
+        return (1 - fft_weight) * laplacian_logit + fft_weight * fft_logit
+
+
 def save_checkpoint(
-    path: str | Path, head: FusionHead, config: ModelConfig, temperature: float, metadata: dict
+    path: str | Path, head: nn.Module, config: ModelConfig, temperature: float, metadata: dict
 ) -> None:
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     torch.save(
@@ -142,10 +224,10 @@ def save_checkpoint(
     )
 
 
-def load_checkpoint(path: str | Path, device: torch.device) -> tuple[FusionHead, ModelConfig, float, dict]:
+def load_checkpoint(path: str | Path, device: torch.device) -> tuple[nn.Module, ModelConfig, float, dict]:
     payload = torch.load(path, map_location=device, weights_only=True)
     config = ModelConfig(**payload["config"])
-    head = FusionHead(config).to(device)
+    head = (ExpertMixtureHead(config) if config.head_type == "mixture" else FusionHead(config)).to(device)
     head.load_state_dict(payload["head_state_dict"])
     head.eval()
     return head, config, float(payload.get("temperature", 1.0)), payload.get("metadata", {})

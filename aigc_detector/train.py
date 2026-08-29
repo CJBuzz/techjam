@@ -10,7 +10,7 @@ import torch
 from torch.utils.data import DataLoader, TensorDataset
 
 from .data import load_labeled_paths, stratified_train_val_test_split
-from .features import extract_features
+from .features import extract_balanced_features, extract_features
 from .metrics import classification_metrics, fit_temperature
 from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, save_checkpoint
 
@@ -29,6 +29,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--augmentation-repeats", type=int, default=2, help="First pass is clean; remaining passes are robust")
     parser.add_argument("--augmentation-depth", type=int, default=1, help="Maximum transforms composed in each robust pass")
+    parser.add_argument(
+        "--augmentation-policy", choices=("random", "balanced"), default="random",
+        help="Balanced creates deterministic paired views with explicit transform groups",
+    )
+    parser.add_argument("--consistency-weight", type=float, default=0.0)
+    parser.add_argument("--worst-group-weight", type=float, default=0.0)
     parser.add_argument(
         "--forensic-mode", choices=("laplacian", "fft", "laplacian_fft"), default="laplacian"
     )
@@ -81,12 +87,21 @@ def main() -> None:
         raise ValueError("--fft-dropout requires --forensic-mode laplacian_fft")
     forensic_dim = 2560 if args.forensic_mode == "laplacian_fft" else 1280
     config = ModelConfig(forensic_mode=args.forensic_mode, forensic_dim=forensic_dim)
+    if args.consistency_weight < 0 or args.worst_group_weight < 0:
+        raise ValueError("Consistency and worst-group weights must be non-negative")
+    if (args.consistency_weight or args.worst_group_weight) and args.augmentation_policy != "balanced":
+        raise ValueError("Paired consistency and worst-group loss require --augmentation-policy balanced")
 
     if args.cache and args.cache.exists():
         cached = torch.load(args.cache, map_location="cpu", weights_only=True)
         train_x, train_y = cached["train_features"], cached["train_labels"]
         val_x, val_y = cached["val_features"], cached["val_labels"]
         test_x, test_y = cached.get("test_features"), cached.get("test_labels")
+        train_groups = cached.get("train_groups")
+        train_original_indices = cached.get("train_original_indices")
+        cache_policy = cached.get("augmentation_policy", "random")
+        if args.augmentation_policy != cache_policy:
+            raise ValueError(f"Feature cache policy is {cache_policy!r}, requested {args.augmentation_policy!r}")
         if train_x.shape[1] != config.clip_dim + config.forensic_dim:
             raise ValueError(
                 f"Feature cache has width {train_x.shape[1]}, but {args.forensic_mode!r} expects "
@@ -95,14 +110,16 @@ def main() -> None:
         print(f"Loaded feature cache: {args.cache}")
     else:
         encoders = FrozenEncoders(config, device)
-        train_x, train_y, _ = extract_features(
-            train_rows,
-            encoders,
-            args.feature_batch_size,
-            max(1, args.augmentation_repeats),
-            robust=True,
-            augmentation_depth=args.augmentation_depth,
-        )
+        if args.augmentation_policy == "balanced":
+            train_x, train_y, _, train_groups, train_original_indices = extract_balanced_features(
+                train_rows, encoders, args.feature_batch_size, max(2, args.augmentation_repeats), args.seed
+            )
+        else:
+            train_x, train_y, _ = extract_features(
+                train_rows, encoders, args.feature_batch_size, max(1, args.augmentation_repeats), robust=True,
+                augmentation_depth=args.augmentation_depth,
+            )
+            train_groups = train_original_indices = None
         val_x, val_y, _ = extract_features(val_rows, encoders, args.feature_batch_size)
         test_x = test_y = None
         if args.report_test_metrics:
@@ -115,6 +132,11 @@ def main() -> None:
                     "train_labels": train_y,
                     "val_features": val_x,
                     "val_labels": val_y,
+                    "augmentation_policy": args.augmentation_policy,
+                    **(
+                        {"train_groups": train_groups, "train_original_indices": train_original_indices}
+                        if train_groups is not None and train_original_indices is not None else {}
+                    ),
                     **(
                         {"test_features": test_x, "test_labels": test_y}
                         if test_x is not None and test_y is not None
@@ -145,13 +167,30 @@ def main() -> None:
         print(f"Initialized CLIP+Laplacian head weights from: {args.initialize_from_laplacian}")
     optimizer = torch.optim.AdamW(head.parameters(), lr=args.learning_rate, weight_decay=1e-4)
     criterion = torch.nn.BCEWithLogitsLoss()
-    loader = DataLoader(TensorDataset(train_x, train_y), batch_size=args.head_batch_size, shuffle=True)
+    if args.augmentation_policy == "balanced":
+        if train_groups is None or train_original_indices is None:
+            raise ValueError("Balanced feature cache is missing group/pair metadata")
+        repeats = len(train_y) // len(train_rows)
+        if repeats * len(train_rows) != len(train_y):
+            raise ValueError("Balanced feature rows must contain complete repeats of every original")
+        original_loader = DataLoader(torch.arange(len(train_rows)), batch_size=args.head_batch_size, shuffle=True)
+        group_names = sorted(set(train_groups))
+    else:
+        loader = DataLoader(TensorDataset(train_x, train_y), batch_size=args.head_batch_size, shuffle=True)
     best_state: dict[str, torch.Tensor] | None = None
     best_loss, stale = float("inf"), 0
     val_x_device, val_y_device = val_x.to(device), val_y.to(device)
     for epoch in range(1, args.epochs + 1):
         head.train()
-        for features, labels in loader:
+        batches = original_loader if args.augmentation_policy == "balanced" else loader
+        for batch in batches:
+            if args.augmentation_policy == "balanced":
+                original_batch = batch
+                feature_indices = torch.cat([original_batch + repeat * len(train_rows) for repeat in range(repeats)])
+                features, labels = train_x[feature_indices], train_y[feature_indices]
+                batch_groups = [train_groups[index] for index in feature_indices.tolist()]
+            else:
+                features, labels = batch
             if args.modality_dropout > 0:
                 features = features.clone()
                 drop_clip = torch.rand(len(features)) < (args.modality_dropout / 2)
@@ -163,7 +202,21 @@ def main() -> None:
                 drop_fft = torch.rand(len(features)) < args.fft_dropout
                 features[drop_fft, fft_start:] = 0
             optimizer.zero_grad(set_to_none=True)
-            loss = criterion(head(features.to(device)), labels.to(device))
+            batch_logits = head(features.to(device))
+            losses = torch.nn.functional.binary_cross_entropy_with_logits(
+                batch_logits, labels.to(device), reduction="none"
+            )
+            loss = losses.mean()
+            if args.consistency_weight > 0:
+                paired_logits = batch_logits.view(repeats, -1)
+                loss = loss + args.consistency_weight * ((paired_logits - paired_logits.mean(0)) ** 2).mean()
+            if args.worst_group_weight > 0:
+                group_losses = []
+                for group in group_names:
+                    mask = torch.tensor([value == group for value in batch_groups], device=device)
+                    if mask.any():
+                        group_losses.append(losses[mask].mean())
+                loss = loss + args.worst_group_weight * torch.stack(group_losses).max()
             loss.backward()
             optimizer.step()
         head.eval()
@@ -206,6 +259,9 @@ def main() -> None:
         "forensic_mode": args.forensic_mode,
         "augmentation_repeats": args.augmentation_repeats,
         "augmentation_depth": args.augmentation_depth,
+        "augmentation_policy": args.augmentation_policy,
+        "consistency_weight": args.consistency_weight,
+        "worst_group_weight": args.worst_group_weight,
         "modality_dropout": args.modality_dropout,
         "fft_dropout": args.fft_dropout,
         "initialized_from_laplacian": str(args.initialize_from_laplacian) if args.initialize_from_laplacian else None,

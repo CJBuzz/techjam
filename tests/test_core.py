@@ -7,8 +7,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from aigc_detector.data import RobustTransform, load_labeled_paths, stratified_split, stratified_train_val_test_split
-from aigc_detector.model import FrozenEncoders, FusionHead, ModelConfig
+from aigc_detector.data import DeterministicTransform, RobustTransform, load_labeled_paths, stratified_split, stratified_train_val_test_split
+from aigc_detector.model import ExpertMixtureHead, FrozenEncoders, FusionHead, ModelConfig, image_quality_statistics
 
 
 class CoreTests(unittest.TestCase):
@@ -23,6 +23,19 @@ class CoreTests(unittest.TestCase):
         transformed = RobustTransform("random", max_ops=3)(image)
         self.assertEqual(transformed.mode, "RGB")
         self.assertEqual(transformed.size, image.size)
+
+    def test_deterministic_transform_is_reproducible_and_restores_rng(self) -> None:
+        image = Image.fromarray(np.arange(40 * 60 * 3, dtype=np.uint8).reshape(40, 60, 3), "RGB")
+        transform = DeterministicTransform("noise+jpeg", 42, "/example/image.png", 1)
+        random.seed(99)
+        np.random.seed(99)
+        expected_python, expected_numpy = random.random(), np.random.random()
+        random.seed(99)
+        np.random.seed(99)
+        first = np.asarray(transform(image))
+        self.assertEqual(random.random(), expected_python)
+        self.assertEqual(np.random.random(), expected_numpy)
+        self.assertTrue(np.array_equal(first, np.asarray(transform(image))))
 
     def test_folder_loading_and_split_are_balanced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -49,6 +62,22 @@ class CoreTests(unittest.TestCase):
         view = FrozenEncoders._fft_tensor(image_batch, torch.device("cpu"))
         self.assertEqual(tuple(view.shape), (2, 3, 32, 48))
         self.assertTrue(torch.isfinite(view).all())
+
+    def test_expert_mixture_shapes_and_gate_prior(self) -> None:
+        config = ModelConfig(forensic_mode="laplacian_fft", forensic_dim=2560, head_type="mixture")
+        head = ExpertMixtureHead(config).eval()
+        features = torch.zeros(4, 3072)
+        self.assertEqual(tuple(head(features).shape), (4,))
+        self.assertTrue(torch.allclose(head.gate_weights(features), torch.full((4,), 0.2), atol=1e-5))
+        fixed = ExpertMixtureHead(ModelConfig(
+            forensic_mode="laplacian_fft", forensic_dim=2560, head_type="mixture", gate_mode="fixed"
+        ))
+        self.assertTrue(torch.equal(fixed.gate_weights(features), torch.full((4,), 0.5)))
+
+    def test_quality_statistics_are_finite(self) -> None:
+        stats = image_quality_statistics([Image.new("RGB", (32, 48), (127, 127, 127))])
+        self.assertEqual(tuple(stats.shape), (1, 6))
+        self.assertTrue(torch.isfinite(stats).all())
 
     def test_source_stratified_three_way_split_is_disjoint(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

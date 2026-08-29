@@ -11,7 +11,7 @@ import torch
 from .data import load_labeled_paths, stratified_train_val_test_split
 from .features import extract_features
 from .metrics import classification_metrics
-from .model import FrozenEncoders, load_checkpoint
+from .model import ExpertMixtureHead, FrozenEncoders, load_checkpoint
 from .train import choose_device
 
 
@@ -48,9 +48,15 @@ def main() -> None:
         head, config, temperature, _ = load_checkpoint(checkpoint_path, device)
         models.append((str(checkpoint_path), head, config, temperature))
     reference_config = models[0][2]
-    if any(config != reference_config for _, _, config, _ in models[1:]):
+    encoder_fields = ("clip_model", "clip_dim", "forensic_dim", "forensic_mode")
+    reference_signature = tuple(getattr(reference_config, field) for field in encoder_fields)
+    if any(tuple(getattr(config, field) for field in encoder_fields) != reference_signature for _, _, config, _ in models[1:]):
         raise ValueError("All checkpoints in one evaluation must use the same encoder configuration")
-    encoders = FrozenEncoders(reference_config, device)
+    encoder_config = reference_config
+    if any(config.quality_dim for _, _, config, _ in models):
+        from dataclasses import replace
+        encoder_config = replace(reference_config, quality_dim=6)
+    encoders = FrozenEncoders(encoder_config, device)
     all_rows = load_labeled_paths(args.data_dir)
     _, validation_rows, test_rows = stratified_train_val_test_split(
         all_rows, args.data_dir, args.validation_fraction, args.test_fraction, args.seed
@@ -71,8 +77,10 @@ def main() -> None:
         features, labels, paths = extract_features(rows, encoders, args.batch_size, transform_mode=name)
         sources = [Path(path).parent.name.lower() for path in paths]
         for checkpoint_path, head, _, temperature in models:
+            model_config = next(config for path, _, config, _ in models if path == checkpoint_path)
+            model_features = features if model_config.quality_dim else features[:, : model_config.clip_dim + model_config.forensic_dim]
             with torch.no_grad():
-                probabilities = torch.sigmoid(head(features.to(device)) / temperature).cpu()
+                probabilities = torch.sigmoid(head(model_features.to(device)) / temperature).cpu()
             by_source = {}
             for source in sorted(set(sources)):
                 mask = torch.tensor([item == source for item in sources], dtype=torch.bool)
@@ -80,6 +88,15 @@ def main() -> None:
             model_results[checkpoint_path][name] = {
                 "overall": classification_metrics(labels, probabilities), "by_source": by_source
             }
+            if isinstance(head, ExpertMixtureHead):
+                with torch.no_grad(): gate = head.gate_weights(model_features.to(device)).cpu()
+                model_results[checkpoint_path][name]["fft_gate"] = {
+                    "overall_mean": float(gate.mean()),
+                    "by_source_mean": {
+                        source: float(gate[torch.tensor([item == source for item in sources])].mean())
+                        for source in sorted(set(sources))
+                    },
+                }
     if len(models) == 1:
         results = {
             "_metadata": {**metadata, "checkpoint": models[0][0]},
