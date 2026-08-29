@@ -26,7 +26,7 @@ def main() -> None:
         help="Checkpoint to evaluate; repeat for compatible checkpoints to reuse extracted features",
     )
     parser.add_argument("--batch-size", type=int, default=8)
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     parser.add_argument("--output", type=Path, default=Path("artifacts/robustness.json"))
     parser.add_argument("--validation-fraction", type=float, default=0.15)
     parser.add_argument("--test-fraction", type=float, default=0.15)

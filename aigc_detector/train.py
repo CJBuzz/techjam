@@ -70,14 +70,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--patience", type=int, default=6)
     parser.add_argument("--learning-rate", type=float, default=1e-3)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+    parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     return parser.parse_args()
 
 
 def choose_device(requested: str) -> torch.device:
     if requested == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("CUDA was requested but is unavailable")
-    return torch.device("cuda" if (requested == "auto" and torch.cuda.is_available()) or requested == "cuda" else "cpu")
+    mps_available = bool(getattr(torch.backends, "mps", None) and torch.backends.mps.is_available())
+    if requested == "mps" and not mps_available:
+        raise RuntimeError("MPS was requested but is unavailable")
+    if requested == "auto":
+        return torch.device("cuda" if torch.cuda.is_available() else "mps" if mps_available else "cpu")
+    return torch.device(requested)
 
 
 def _dataset_fingerprint(rows: list[tuple[Path, int]], root: Path) -> str:
