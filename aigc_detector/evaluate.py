@@ -8,11 +8,79 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .data import ROBUSTNESS_CONDITIONS, ROBUST_SELECTION_CONDITIONS, load_labeled_paths, stratified_train_val_test_split
+from .data import (
+    ROBUSTNESS_CONDITIONS,
+    ROBUST_SELECTION_CONDITIONS,
+    image_source,
+    load_labeled_paths,
+    stratified_train_val_test_split,
+)
 from .features import extract_condition_features
 from .metrics import classification_metrics
 from .model import AdaptiveTriExpertHead, ExpertMixtureHead, FrozenEncoders, load_checkpoint
 from .train import choose_device
+
+
+def paired_generator_metrics(
+    labels: torch.Tensor,
+    probabilities: torch.Tensor,
+    sources: list[str],
+    threshold: float,
+) -> dict[str, object]:
+    """Pair every synthetic generator with the shared real set.
+
+    This avoids reporting a misleading 1:2-class-ratio accuracy for B-Free's
+    one real source and two synthetic generators. The checkpoint threshold is
+    kept frozen; no external labels are used for calibration or tuning.
+    """
+    labels = labels.detach().cpu()
+    probabilities = probabilities.detach().cpu()
+    real_mask = labels == 0
+    generators = sorted({source for source, label in zip(sources, labels.tolist()) if int(label) == 1})
+    if not bool(real_mask.any()) or not generators:
+        raise ValueError("Paired-generator evaluation requires real images and at least one AI source")
+    source_reports: dict[str, dict[str, object]] = {}
+    for generator in generators:
+        fake_mask = torch.tensor(
+            [source == generator and int(label) == 1 for source, label in zip(sources, labels.tolist())],
+            dtype=torch.bool,
+        )
+        pair_mask = real_mask | fake_mask
+        report = classification_metrics(labels[pair_mask], probabilities[pair_mask], threshold)
+        report["real_images"] = int(real_mask.sum())
+        report["synthetic_images"] = int(fake_mask.sum())
+        source_reports[generator] = report
+    balanced = {name: float(report["balanced_accuracy"]) for name, report in source_reports.items()}
+    aucs = {name: float(report["roc_auc"]) for name, report in source_reports.items()}
+    real_predicted_ai = probabilities[real_mask] >= threshold
+    return {
+        "real_images": int(real_mask.sum()),
+        "real_false_positive_rate": float(real_predicted_ai.float().mean()),
+        "real_mean_probability": float(probabilities[real_mask].mean()),
+        "generators": source_reports,
+        "macro_balanced_accuracy": float(np.mean(list(balanced.values()))),
+        "macro_roc_auc": float(np.mean(list(aucs.values()))),
+        "worst_generator_balanced_accuracy": float(min(balanced.values())),
+        "worst_generator": min(balanced, key=balanced.get),
+    }
+
+
+def source_diagnostics(
+    labels: torch.Tensor, probabilities: torch.Tensor, sources: list[str], threshold: float
+) -> dict[str, dict[str, float | int]]:
+    """Report class-aware diagnostics for sources that may contain one class only."""
+    reports = {}
+    for source in sorted(set(sources)):
+        mask = torch.tensor([item == source for item in sources], dtype=torch.bool)
+        source_labels = labels[mask]
+        source_probabilities = probabilities[mask]
+        reports[source] = {
+            "images": int(mask.sum()),
+            "true_ai_fraction": float(source_labels.mean()),
+            "predicted_ai_fraction": float((source_probabilities >= threshold).float().mean()),
+            "mean_probability": float(source_probabilities.mean()),
+        }
+    return reports
 
 
 def main() -> None:
@@ -43,7 +111,18 @@ def main() -> None:
     )
     parser.add_argument("--error-analysis-output", type=Path, default=None)
     parser.add_argument("--top-errors", type=int, default=12)
+    parser.add_argument(
+        "--protocol",
+        choices=("standard", "paired-generators"),
+        default="standard",
+        help=(
+            "Paired-generators evaluates each AI source against the shared real set and "
+            "macro-averages generators; use it with --split all for external benchmarks"
+        ),
+    )
     args = parser.parse_args()
+    if args.protocol == "paired-generators" and args.split != "all":
+        raise ValueError("--protocol paired-generators requires --split all")
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -80,6 +159,11 @@ def main() -> None:
         "test_fraction": args.test_fraction,
         "seed": args.seed,
         "transform_strengths": "every official challenge severity is evaluated deterministically",
+        "protocol": args.protocol,
+        "external_threshold_policy": (
+            "checkpoint calibration and threshold are frozen; external labels are used only for scoring"
+            if args.protocol == "paired-generators" else None
+        ),
     }
     model_results = {path: {} for path, _, _, _, _ in models}
     error_records = {path: [] for path, _, _, _, _ in models}
@@ -89,19 +173,29 @@ def main() -> None:
         features, labels, paths, _ = extract_condition_features(
             rows, encoders, args.batch_size, (name,), args.seed
         )
-        sources = [Path(path).parent.name.lower() for path in paths]
+        sources = [image_source(path, args.data_dir) for path in paths]
         for checkpoint_path, head, model_config, temperature, checkpoint_metadata in models:
             model_features = features if model_config.quality_dim else features[:, : model_config.clip_dim + model_config.forensic_dim]
             threshold = float(checkpoint_metadata.get("threshold", 0.5))
             with torch.no_grad():
                 probabilities = torch.sigmoid(head(model_features.to(device)) / temperature).cpu()
-            by_source = {}
-            for source in sorted(set(sources)):
-                mask = torch.tensor([item == source for item in sources], dtype=torch.bool)
-                by_source[source] = classification_metrics(labels[mask], probabilities[mask], threshold)
-            model_results[checkpoint_path][name] = {
-                "overall": classification_metrics(labels, probabilities, threshold), "by_source": by_source
+            condition_result: dict[str, object] = {
+                "overall": classification_metrics(labels, probabilities, threshold)
             }
+            if args.protocol == "paired-generators":
+                condition_result["source_diagnostics"] = source_diagnostics(
+                    labels, probabilities, sources, threshold
+                )
+                condition_result["paired_generators"] = paired_generator_metrics(
+                    labels, probabilities, sources, threshold
+                )
+            else:
+                by_source = {}
+                for source in sorted(set(sources)):
+                    mask = torch.tensor([item == source for item in sources], dtype=torch.bool)
+                    by_source[source] = classification_metrics(labels[mask], probabilities[mask], threshold)
+                condition_result["by_source"] = by_source
+            model_results[checkpoint_path][name] = condition_result
             predictions = probabilities >= threshold
             for index, (truth, prediction) in enumerate(zip(labels.bool(), predictions)):
                 if bool(truth) != bool(prediction):
@@ -125,18 +219,35 @@ def main() -> None:
                     },
                 }
     for checkpoint_path in model_results:
-        condition_accuracies = {
-            condition: values["overall"]["accuracy"] for condition, values in model_results[checkpoint_path].items()
-        }
-        clean_accuracy = condition_accuracies["clean"]
-        transformed = {name: value for name, value in condition_accuracies.items() if name != "clean"}
-        model_results[checkpoint_path]["_robust_summary"] = {
-            "clean_accuracy": clean_accuracy,
-            "mean_transformed_accuracy": float(np.mean(list(transformed.values()))),
-            "worst_transformed_accuracy": float(min(transformed.values())),
-            "worst_condition": min(transformed, key=transformed.get),
-            "mean_drop_from_clean": float(clean_accuracy - np.mean(list(transformed.values()))),
-        }
+        if args.protocol == "paired-generators":
+            condition_scores = {
+                condition: float(values["paired_generators"]["macro_balanced_accuracy"])
+                for condition, values in model_results[checkpoint_path].items()
+            }
+            clean_score = condition_scores["clean"]
+            transformed = {name: value for name, value in condition_scores.items() if name != "clean"}
+            model_results[checkpoint_path]["_generalization_summary"] = {
+                "metric": "macro_generator_balanced_accuracy",
+                "clean_score": clean_score,
+                "mean_transformed_score": float(np.mean(list(transformed.values()))),
+                "worst_transformed_score": float(min(transformed.values())),
+                "worst_condition": min(transformed, key=transformed.get),
+                "mean_drop_from_clean": float(clean_score - np.mean(list(transformed.values()))),
+            }
+        else:
+            condition_accuracies = {
+                condition: values["overall"]["accuracy"]
+                for condition, values in model_results[checkpoint_path].items()
+            }
+            clean_accuracy = condition_accuracies["clean"]
+            transformed = {name: value for name, value in condition_accuracies.items() if name != "clean"}
+            model_results[checkpoint_path]["_robust_summary"] = {
+                "clean_accuracy": clean_accuracy,
+                "mean_transformed_accuracy": float(np.mean(list(transformed.values()))),
+                "worst_transformed_accuracy": float(min(transformed.values())),
+                "worst_condition": min(transformed, key=transformed.get),
+                "mean_drop_from_clean": float(clean_accuracy - np.mean(list(transformed.values()))),
+            }
         ranked = sorted(
             error_records[checkpoint_path],
             key=lambda item: item["pred"] if item["error_type"] == "false_positive" else 1 - item["pred"],

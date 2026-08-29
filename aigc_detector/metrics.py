@@ -21,12 +21,15 @@ def classification_metrics(
     p = probabilities.detach().cpu().numpy()
     predictions = (p >= threshold).astype(int)
     tn, fp, fn, tp = confusion_matrix(y, predictions, labels=[0, 1]).ravel()
+    specificity = float(tn / (tn + fp)) if tn + fp else float("nan")
+    sensitivity = float(tp / (tp + fn)) if fn + tp else float("nan")
     return {
         "accuracy": float(accuracy_score(y, predictions)),
+        "balanced_accuracy": float((specificity + sensitivity) / 2),
         "precision": float(precision_score(y, predictions, zero_division=0)),
-        "recall": float(recall_score(y, predictions, zero_division=0)),
+        "recall": sensitivity,
         "f1": float(f1_score(y, predictions, zero_division=0)),
-        "specificity": float(tn / (tn + fp)) if tn + fp else float("nan"),
+        "specificity": specificity,
         "false_positive_rate": float(fp / (tn + fp)) if tn + fp else float("nan"),
         "false_negative_rate": float(fn / (fn + tp)) if fn + tp else float("nan"),
         "roc_auc": float(roc_auc_score(y, p)) if len(np.unique(y)) == 2 else float("nan"),

@@ -136,3 +136,15 @@ The Laplacian+FFT checkpoint is the recommended candidate because it has the str
 
 - `1140fb0` — robustness, FFT, ensemble, evaluation, cache, metric, documentation, and test improvements.
 - `3b305ec` — Apple MPS support for training, evaluation, mixture training, and prediction.
+
+## Subsequent cross-generator evaluation support
+
+After external review identified unseen-generator generalization as the largest remaining risk, the evaluation workflow was extended without changing or retraining the architecture:
+
+- added safe preparation of the B-Free RAISE/FLUX/SD3.5 archives with optional checksum verification and no image re-encoding;
+- added a paired-generator protocol that evaluates each fake generator against the shared real set;
+- added macro and worst-generator balanced accuracy so B-Free's 1:2 real/fake ratio does not inflate the headline score;
+- kept checkpoint calibration and thresholds frozen during external evaluation;
+- added a runner for the untouched local test followed by B-Free external evaluation;
+- documented the scientific protocol, data-license restriction, and Stage 3 decision rule;
+- expanded the test suite from 10 to 14 tests.

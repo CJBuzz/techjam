@@ -4,6 +4,12 @@ A lightweight multi-view detector for TikTok TechJam Track 5. The strongest vers
 
 The model stays far below the 2-billion-parameter limit and feature caching makes the initial frozen-encoder stage practical on modest hardware.
 
+## Cross-generator evaluation
+
+The current mixed-5K results measure same-source held-out performance. They do not establish generalization to unseen image generators. The next experiment freezes the selected checkpoint and evaluates the untouched local test split followed by the B-Free FLUX/Stable Diffusion 3.5 external benchmark, without retraining or external threshold tuning.
+
+See [the cross-generator generalization protocol](docs/GENERALIZATION_PROTOCOL.md) for the verified research rationale, license/download notes, safe dataset preparation, paired-generator metrics, and the one-command Stage 1–2 evaluation workflow.
+
 ## Robustness-first training
 
 The current training path can cover every challenge severity deterministically, keep clean/transformed pairs together, penalize prediction drift, and optimize the worst transformation group. Checkpoint selection uses clean loss plus the mean and worst losses on the hardest validation severities. The recommended starting point is:

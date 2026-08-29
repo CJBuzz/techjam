@@ -41,6 +41,12 @@ def load_labeled_paths(root: str | Path) -> list[tuple[Path, int]]:
     return sorted(rows, key=lambda row: str(row[0]))
 
 
+def image_source(path: str | Path, root: str | Path) -> str:
+    """Return the source folder in ``root/{real,ai}/{source}/...`` layouts."""
+    parts = Path(path).resolve().relative_to(Path(root).resolve()).parts
+    return parts[1].lower() if len(parts) >= 3 else "default"
+
+
 def stratified_split(
     rows: list[tuple[Path, int]], validation_fraction: float, seed: int
 ) -> tuple[list[tuple[Path, int]], list[tuple[Path, int]]]:
@@ -77,8 +83,7 @@ def stratified_train_val_test_split(
     groups: dict[tuple[int, str], list[tuple[Path, int]]] = {}
     for row in rows:
         path, label = row
-        parts = path.resolve().relative_to(root).parts
-        source = parts[1].lower() if len(parts) >= 3 else "default"
+        source = image_source(path, root)
         groups.setdefault((label, source), []).append(row)
 
     rng = random.Random(seed)
