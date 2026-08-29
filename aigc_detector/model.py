@@ -35,7 +35,7 @@ class ModelConfig:
 
 
 def image_quality_statistics(images: list[Image.Image]) -> torch.Tensor:
-    """Six inexpensive pre-encoder quality descriptors, standardized to stable ranges."""
+    """Six inexpensive degradation descriptors without raw size/format shortcuts."""
     rows = []
     for image in images:
         gray_image = image.convert("L")
@@ -60,7 +60,9 @@ def image_quality_statistics(images: list[Image.Image]) -> torch.Tensor:
         vertical = np.abs(gray[:, x_boundaries] - gray[:, x_boundaries - 1]).mean() if len(x_boundaries) else 0.0
         horizontal = np.abs(gray[y_boundaries, :] - gray[y_boundaries - 1, :]).mean() if len(y_boundaries) else 0.0
         block_energy = float((vertical + horizontal) * 5)
-        rows.append((lap_energy, hf_ratio, slope, block_energy, np.log2(max(width, height)) / 12, np.log(width / height) / 4))
+        contrast_span = float(np.quantile(gray, 0.95) - np.quantile(gray, 0.05))
+        clipping_fraction = float(((gray <= 1 / 255) | (gray >= 254 / 255)).mean())
+        rows.append((lap_energy, hf_ratio, slope, block_energy, contrast_span, clipping_fraction))
     return torch.tensor(rows, dtype=torch.float32)
 
 
@@ -214,6 +216,65 @@ class ExpertMixtureHead(nn.Module):
         return (1 - fft_weight) * laplacian_logit + fft_weight * fft_logit
 
 
+class AdaptiveTriExpertHead(nn.Module):
+    """Adaptive CLIP, CLIP+Laplacian, and CLIP+FFT ensemble.
+
+    The semantic branch is intentionally independent of fragile high-frequency
+    evidence, while the gate can favor forensic experts on high-quality inputs.
+    """
+
+    def __init__(self, config: ModelConfig) -> None:
+        super().__init__()
+        if config.forensic_mode != "laplacian_fft" or config.forensic_dim != 2560:
+            raise ValueError("Three-expert mixture requires laplacian_fft features")
+        self.config = config
+        semantic_config = ModelConfig(
+            clip_model=config.clip_model, hidden_dim=config.hidden_dim, dropout=config.dropout,
+            clip_dim=config.clip_dim, forensic_dim=0, forensic_mode="laplacian",
+        )
+        forensic_config = ModelConfig(
+            clip_model=config.clip_model, hidden_dim=config.hidden_dim, dropout=config.dropout,
+            clip_dim=config.clip_dim, forensic_dim=1280, forensic_mode="laplacian",
+        )
+        self.semantic_expert = FusionHead(semantic_config)
+        self.laplacian_expert = FusionHead(forensic_config)
+        self.fft_expert = FusionHead(forensic_config)
+        if config.gate_mode in {"features", "quality"}:
+            gate_dim = config.clip_dim + config.forensic_dim + (
+                config.quality_dim if config.gate_mode == "quality" else 0
+            )
+            self.gate = nn.Sequential(
+                nn.LayerNorm(gate_dim), nn.Linear(gate_dim, 48), nn.GELU(), nn.Linear(48, 3),
+            )
+            nn.init.zeros_(self.gate[-1].weight)
+            nn.init.constant_(self.gate[-1].bias[0], -0.7985077)  # log(0.45)
+            nn.init.constant_(self.gate[-1].bias[1], -1.0498221)  # log(0.35)
+            nn.init.constant_(self.gate[-1].bias[2], -1.6094379)  # log(0.20)
+        elif config.gate_mode != "fixed":
+            raise ValueError(f"Unknown gate mode: {config.gate_mode!r}")
+
+    def expert_logits(self, features: torch.Tensor) -> torch.Tensor:
+        clip = features[:, : self.config.clip_dim]
+        laplacian = features[:, self.config.clip_dim : self.config.clip_dim + 1280]
+        fft = features[:, self.config.clip_dim + 1280 : self.config.clip_dim + 2560]
+        return torch.stack((
+            self.semantic_expert(clip),
+            self.laplacian_expert(torch.cat((clip, laplacian), 1)),
+            self.fft_expert(torch.cat((clip, fft), 1)),
+        ), dim=1)
+
+    def gate_weights(self, features: torch.Tensor) -> torch.Tensor:
+        if self.config.gate_mode == "fixed":
+            return torch.tensor((0.45, 0.35, 0.20), device=features.device).expand(len(features), -1)
+        gate_features = features if self.config.gate_mode == "quality" else features[
+            :, : self.config.clip_dim + self.config.forensic_dim
+        ]
+        return torch.softmax(self.gate(gate_features), dim=1)
+
+    def forward(self, features: torch.Tensor) -> torch.Tensor:
+        return (self.expert_logits(features) * self.gate_weights(features)).sum(dim=1)
+
+
 def save_checkpoint(
     path: str | Path, head: nn.Module, config: ModelConfig, temperature: float, metadata: dict
 ) -> None:
@@ -227,7 +288,15 @@ def save_checkpoint(
 def load_checkpoint(path: str | Path, device: torch.device) -> tuple[nn.Module, ModelConfig, float, dict]:
     payload = torch.load(path, map_location=device, weights_only=True)
     config = ModelConfig(**payload["config"])
-    head = (ExpertMixtureHead(config) if config.head_type == "mixture" else FusionHead(config)).to(device)
+    if config.head_type == "mixture":
+        head = ExpertMixtureHead(config)
+    elif config.head_type == "tri_mixture":
+        head = AdaptiveTriExpertHead(config)
+    elif config.head_type == "fusion":
+        head = FusionHead(config)
+    else:
+        raise ValueError(f"Unknown head type: {config.head_type!r}")
+    head = head.to(device)
     head.load_state_dict(payload["head_state_dict"])
     head.eval()
     return head, config, float(payload.get("temperature", 1.0)), payload.get("metadata", {})

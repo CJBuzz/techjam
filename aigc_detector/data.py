@@ -108,7 +108,7 @@ class RobustTransform:
     names = ("clean", "jpeg", "blur", "resize", "noise", "color", "crop")
 
     def __init__(self, mode: str = "random", max_ops: int = 1) -> None:
-        if mode != "random" and mode not in self.names:
+        if mode != "random" and mode not in self.names and mode not in TRANSFORM_CONDITIONS:
             raise ValueError(f"Unknown transform {mode!r}")
         if max_ops < 1:
             raise ValueError("max_ops must be at least 1")
@@ -118,46 +118,89 @@ class RobustTransform:
     def __call__(self, image: Image.Image) -> Image.Image:
         image = image.convert("RGB")
         if self.mode != "random":
-            return self._apply_one(image, self.mode)
+            operation, parameter = resolve_transform_condition(self.mode)
+            return self._apply_one(image, operation, parameter)
         count = random.randint(1, self.max_ops)
         for mode in random.sample(self.names[1:], k=min(count, len(self.names) - 1)):
             image = self._apply_one(image, mode)
         return image
 
     @staticmethod
-    def _apply_one(image: Image.Image, mode: str) -> Image.Image:
+    def _apply_one(image: Image.Image, mode: str, parameter: float | int | None = None) -> Image.Image:
         if mode == "clean":
             return image
         if mode == "jpeg":
             buffer = io.BytesIO()
-            image.save(buffer, format="JPEG", quality=random.choice((30, 50, 70, 90)))
+            quality = int(parameter) if parameter is not None else random.choice((30, 50, 70, 90))
+            image.save(buffer, format="JPEG", quality=quality)
             buffer.seek(0)
             with Image.open(buffer) as decoded:
                 return decoded.convert("RGB")
         if mode == "blur":
-            return image.filter(ImageFilter.GaussianBlur(random.choice((0.5, 1.0, 2.0))))
+            sigma = float(parameter) if parameter is not None else random.choice((0.5, 1.0, 2.0))
+            return image.filter(ImageFilter.GaussianBlur(sigma))
         if mode == "resize":
-            scale = random.choice((0.25, 0.5))
+            scale = float(parameter) if parameter is not None else random.choice((0.25, 0.5))
             size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
             return image.resize(size, Image.Resampling.BILINEAR).resize(image.size, Image.Resampling.BILINEAR)
         if mode == "noise":
             array = np.asarray(image, dtype=np.float32) / 255.0
-            sigma = random.choice((0.02, 0.05, 0.10))
+            sigma = float(parameter) if parameter is not None else random.choice((0.02, 0.05, 0.10))
             array = np.clip(array + np.random.normal(0.0, sigma, array.shape), 0.0, 1.0)
             return Image.fromarray((array * 255).astype(np.uint8), "RGB")
         if mode == "color":
             for enhancer in (ImageEnhance.Brightness, ImageEnhance.Contrast, ImageEnhance.Color):
-                image = enhancer(image).enhance(random.uniform(0.8, 1.2))
+                factor = float(parameter) if parameter is not None else random.uniform(0.8, 1.2)
+                image = enhancer(image).enhance(factor)
             return image
-        crop_w, crop_h = round(image.width * 0.8), round(image.height * 0.8)
+        crop_fraction = float(parameter) if parameter is not None else 0.8
+        crop_w, crop_h = round(image.width * crop_fraction), round(image.height * crop_fraction)
         left, top = (image.width - crop_w) // 2, (image.height - crop_h) // 2
         return image.crop((left, top, left + crop_w, top + crop_h)).resize(image.size, Image.Resampling.BICUBIC)
 
 
-BALANCED_TRANSFORM_GROUPS = (
-    "jpeg", "blur", "resize", "noise", "color", "crop",
-    "resize+jpeg", "blur+jpeg", "crop+resize", "color+jpeg", "noise+jpeg",
+TRANSFORM_CONDITIONS: dict[str, tuple[str, float | int | None]] = {
+    "clean": ("clean", None),
+    "jpeg_q90": ("jpeg", 90),
+    "jpeg_q70": ("jpeg", 70),
+    "jpeg_q50": ("jpeg", 50),
+    "jpeg_q30": ("jpeg", 30),
+    "blur_s0.5": ("blur", 0.5),
+    "blur_s1.0": ("blur", 1.0),
+    "blur_s2.0": ("blur", 2.0),
+    "resize_x0.5": ("resize", 0.5),
+    "resize_x0.25": ("resize", 0.25),
+    "noise_s0.02": ("noise", 0.02),
+    "noise_s0.05": ("noise", 0.05),
+    "noise_s0.10": ("noise", 0.10),
+    "color_0.8": ("color", 0.8),
+    "color_1.2": ("color", 1.2),
+    "crop_0.8": ("crop", 0.8),
+}
+
+ROBUSTNESS_CONDITIONS = tuple(TRANSFORM_CONDITIONS)
+ROBUST_SELECTION_CONDITIONS = (
+    "jpeg_q30", "blur_s2.0", "resize_x0.25", "noise_s0.10", "color_0.8", "crop_0.8",
 )
+
+# Exact challenge severities prevent a random cache from under-sampling the hard cases.
+# A few realistic chains retain the redistribution scenarios from the original policy.
+BALANCED_TRANSFORM_GROUPS = tuple(TRANSFORM_CONDITIONS)[1:] + (
+    "resize_x0.5+jpeg_q70",
+    "blur_s1.0+jpeg_q70",
+    "crop_0.8+resize_x0.5",
+    "color_0.8+jpeg_q70",
+    "noise_s0.05+jpeg_q70",
+)
+
+
+def resolve_transform_condition(name: str) -> tuple[str, float | int | None]:
+    """Resolve an exact challenge condition or a base operation with random severity."""
+    if name in TRANSFORM_CONDITIONS:
+        return TRANSFORM_CONDITIONS[name]
+    if name in RobustTransform.names:
+        return name, None
+    raise ValueError(f"Unknown transform condition {name!r}")
 
 
 class DeterministicTransform:
@@ -165,11 +208,12 @@ class DeterministicTransform:
 
     def __init__(self, group: str, seed: int, path: str, repeat: int) -> None:
         operations = tuple(group.split("+"))
-        if not operations or any(operation not in RobustTransform.names for operation in operations):
+        if not operations:
             raise ValueError(f"Unknown transform group {group!r}")
+        resolved = tuple(resolve_transform_condition(operation) for operation in operations)
         digest = hashlib.sha256(f"{seed}\0{path}\0{repeat}".encode()).digest()
         self.seed = int.from_bytes(digest[:8], "big") % (2**32)
-        self.operations = operations
+        self.operations = resolved
 
     def __call__(self, image: Image.Image) -> Image.Image:
         python_state = random.getstate()
@@ -178,8 +222,8 @@ class DeterministicTransform:
             random.seed(self.seed)
             np.random.seed(self.seed)
             image = image.convert("RGB")
-            for operation in self.operations:
-                image = RobustTransform._apply_one(image, operation)
+            for operation, parameter in self.operations:
+                image = RobustTransform._apply_one(image, operation, parameter)
             return image
         finally:
             random.setstate(python_state)

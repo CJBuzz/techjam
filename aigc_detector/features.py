@@ -43,6 +43,34 @@ def extract_features(
     return torch.cat(all_features), torch.cat(all_labels), all_paths
 
 
+def extract_condition_features(
+    rows: list[tuple[Path, int]],
+    encoders: FrozenEncoders,
+    batch_size: int,
+    conditions: tuple[str, ...],
+    seed: int,
+) -> tuple[torch.Tensor, torch.Tensor, list[str], list[str]]:
+    """Extract deterministic, severity-specific views in condition-major order."""
+    all_features: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
+    all_paths: list[str] = []
+    all_conditions: list[str] = []
+    for condition_index, condition in enumerate(conditions):
+        for start in tqdm(range(0, len(rows), batch_size), desc=f"condition {condition}"):
+            images: list[Image.Image] = []
+            labels: list[int] = []
+            for path, label in rows[start : start + batch_size]:
+                transform = DeterministicTransform(condition, seed, str(path), condition_index)
+                with Image.open(path) as source:
+                    images.append(transform(source.convert("RGB")))
+                labels.append(label)
+                all_paths.append(str(path))
+                all_conditions.append(condition)
+            all_features.append(encoders(images))
+            all_labels.append(torch.tensor(labels, dtype=torch.float32))
+    return torch.cat(all_features), torch.cat(all_labels), all_paths, all_conditions
+
+
 def extract_balanced_features(
     rows: list[tuple[Path, int]], encoders: FrozenEncoders, batch_size: int, augmentation_repeats: int, seed: int
 ) -> tuple[torch.Tensor, torch.Tensor, list[str], list[str], torch.Tensor]:
@@ -84,6 +112,19 @@ def extract_balanced_quality_statistics(
                 (index * (augmentation_repeats - 1) + repeat - 1) % len(BALANCED_TRANSFORM_GROUPS)
             ]
             transform = RobustTransform("clean") if group == "clean" else DeterministicTransform(group, seed, str(path), repeat)
+            with Image.open(path) as source:
+                statistics.append(image_quality_statistics([transform(source.convert("RGB"))])[0])
+    return torch.stack(statistics)
+
+
+def extract_condition_quality_statistics(
+    rows: list[tuple[Path, int]], conditions: tuple[str, ...], seed: int
+) -> torch.Tensor:
+    """Quality descriptors aligned with condition-major robust feature rows."""
+    statistics = []
+    for condition_index, condition in enumerate(conditions):
+        for path, _ in tqdm(rows, desc=f"quality {condition}"):
+            transform = DeterministicTransform(condition, seed, str(path), condition_index)
             with Image.open(path) as source:
                 statistics.append(image_quality_statistics([transform(source.convert("RGB"))])[0])
     return torch.stack(statistics)

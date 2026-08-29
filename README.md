@@ -4,6 +4,77 @@ A lightweight multi-view detector for TikTok TechJam Track 5. The strongest vers
 
 The model stays far below the 2-billion-parameter limit and feature caching makes the initial frozen-encoder stage practical on modest hardware.
 
+## Robustness-first training
+
+The current training path can cover every challenge severity deterministically, keep clean/transformed pairs together, penalize prediction drift, and optimize the worst transformation group. Checkpoint selection uses clean loss plus the mean and worst losses on the hardest validation severities. The recommended starting point is:
+
+```bash
+uv run aigc-train \
+  --data-dir data/mixed_5k \
+  --output artifacts/robust_laplacian.pt \
+  --cache artifacts/robust_laplacian_features.pt \
+  --forensic-mode laplacian \
+  --augmentation-policy balanced --augmentation-repeats 6 \
+  --consistency-weight 0.05 --worst-group-weight 0.50 \
+  --robust-validation-weight 0.70 \
+  --feature-batch-size 16 --head-batch-size 64 \
+  --epochs 50 --patience 8 --device auto
+
+uv run aigc-train \
+  --data-dir data/mixed_5k \
+  --output artifacts/robust_laplacian_fft.pt \
+  --cache artifacts/robust_laplacian_fft_features.pt \
+  --forensic-mode laplacian_fft \
+  --initialize-from-laplacian artifacts/robust_laplacian.pt \
+  --augmentation-policy balanced --augmentation-repeats 6 \
+  --consistency-weight 0.05 --worst-group-weight 0.50 \
+  --robust-validation-weight 0.70 --learning-rate 1e-4 \
+  --feature-batch-size 16 --head-batch-size 64 \
+  --epochs 50 --patience 8 --device auto
+```
+
+The balanced policy includes every official JPEG, blur, resize, noise, color, and crop severity, plus a small set of composed redistribution transforms. Feature caches include an experiment manifest and are rejected when the dataset, split, encoder, or augmentation configuration changes.
+
+### Adaptive three-expert ensemble
+
+The experimental three-expert head combines complementary evidence:
+
+- a CLIP-only semantic expert intended to remain useful when pixel artifacts are damaged;
+- a CLIP + Laplacian expert for local edge and residual evidence;
+- a CLIP + FFT expert for frequency evidence;
+- a learned softmax gate, optionally conditioned on inexpensive image-quality statistics.
+
+Initialize it from the two robust checkpoints and train it against the same robustness-aware validation objective:
+
+```bash
+uv run aigc-train-mixture \
+  --data-dir data/mixed_5k \
+  --cache artifacts/robust_laplacian_fft_features.pt \
+  --laplacian-checkpoint artifacts/robust_laplacian.pt \
+  --fused-checkpoint artifacts/robust_laplacian_fft.pt \
+  --output artifacts/robust_three_expert.pt \
+  --experts three --gate-mode quality \
+  --gate-prior-weight 0.01 --robust-validation-weight 0.70 \
+  --learning-rate 5e-5 --epochs 40 --patience 8 --device auto
+```
+
+Treat this ensemble as a candidate until it beats the fused model on the untouched validation robustness matrix. Model selection must not use the test split.
+
+### Exact robustness and error analysis
+
+```bash
+uv run aigc-evaluate \
+  --data-dir data/mixed_5k \
+  --checkpoint artifacts/robust_laplacian_fft.pt \
+  --checkpoint artifacts/robust_three_expert.pt \
+  --split validation --profile full \
+  --output artifacts/validation_robustness.json \
+  --error-analysis-output artifacts/validation_errors.json \
+  --batch-size 16 --device auto
+```
+
+`--profile full` scores all 15 official non-clean severities independently. The report includes precision, recall, F1, specificity, false-positive/false-negative rates, confusion matrices, mean transformed accuracy, worst transformed accuracy, and the drop from clean accuracy. After selecting one final checkpoint, run the same command once with `--split test`.
+
 ## Setup
 
 ```bash
@@ -34,7 +105,7 @@ uv run aigc-train \
   --epochs 30
 ```
 
-The cache stores one clean and one randomly transformed feature row per training image. On Kaggle, increase `--augmentation-repeats` to 4-8, use `--augmentation-depth 2`, and use a larger, source-diverse dataset. Delete or change the cache path whenever the source images, split seed, encoder, or augmentation configuration changes.
+The cache stores one clean and one randomly transformed feature row per training image. On Kaggle, prefer the balanced robustness-first configuration above and use a larger, source-diverse dataset. Caches are automatically checked against their experiment manifest.
 
 ## Reproduced mixed 5K CPU run
 
@@ -157,13 +228,20 @@ the untouched test originals. Use `--split validation` while comparing candidate
 then `--split test` once for the selected model. Repeat `--checkpoint` to compare
 multiple checkpoints with the same encoder configuration while extracting each
 transformed feature only once. Its JSON contains aggregate and per-source metrics
-for every transformation. Keep the split fractions and seed identical to training.
+for every exact severity, plus a robustness summary. Keep the split fractions and
+seed identical to training. Earlier seven-condition results in this README used one
+sampled severity per transformation family and should not be compared directly with
+the new full-severity report.
 The model automatically discovers weights in this workspace's `.hf-cache` and
 `.torch-cache`, so `HF_HUB_OFFLINE=1` works after the initial download. On a new
 machine, omit the offline flag for the first run so the pretrained weights can be
 downloaded.
 
 For a final report, use a held-out dataset/generator and report clean plus individual JPEG, blur, resizing, noise, color, and crop settings. The smoke subset only proves that the software path works; its metrics are not scientifically meaningful.
+
+For a completely separate source or generator dataset, pass `--split all`; this
+evaluates every labeled image without recreating an internal train/validation/test
+split.
 
 ## Kaggle recommendations
 

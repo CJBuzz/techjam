@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import random
+from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from .data import load_labeled_paths, stratified_train_val_test_split
-from .features import extract_balanced_features, extract_features
-from .metrics import classification_metrics, fit_temperature
+from .data import ROBUST_SELECTION_CONDITIONS, load_labeled_paths, stratified_train_val_test_split
+from .features import extract_balanced_features, extract_condition_features, extract_features
+from .metrics import classification_metrics, fit_temperature, select_threshold
 from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, save_checkpoint
 
 
@@ -35,6 +37,15 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--consistency-weight", type=float, default=0.0)
     parser.add_argument("--worst-group-weight", type=float, default=0.0)
+    parser.add_argument(
+        "--robust-validation", action=argparse.BooleanOptionalAction, default=True,
+        help="Select checkpoints on clean plus deterministic worst-severity validation views",
+    )
+    parser.add_argument(
+        "--robust-validation-weight", type=float, default=0.7,
+        help="Weight assigned to robust mean/worst validation loss during checkpoint selection",
+    )
+    parser.add_argument("--threshold-objective", choices=("balanced", "f1"), default="balanced")
     parser.add_argument(
         "--forensic-mode", choices=("laplacian", "fft", "laplacian_fft"), default="laplacian"
     )
@@ -69,6 +80,34 @@ def choose_device(requested: str) -> torch.device:
     return torch.device("cuda" if (requested == "auto" and torch.cuda.is_available()) or requested == "cuda" else "cpu")
 
 
+def _dataset_fingerprint(rows: list[tuple[Path, int]], root: Path) -> str:
+    """Fast cache identity based on paths, labels, sizes, and modification times."""
+    digest = hashlib.sha256()
+    resolved_root = root.resolve()
+    for path, label in sorted(rows, key=lambda row: str(row[0])):
+        stat = path.stat()
+        relative = path.resolve().relative_to(resolved_root)
+        digest.update(f"{relative}\0{label}\0{stat.st_size}\0{stat.st_mtime_ns}\n".encode())
+    return digest.hexdigest()
+
+
+def _cache_manifest(args: argparse.Namespace, config: ModelConfig, rows: list[tuple[Path, int]]) -> dict:
+    return {
+        "schema_version": 2,
+        "dataset_fingerprint": _dataset_fingerprint(rows, args.data_dir),
+        "model_config": asdict(config),
+        "validation_fraction": args.validation_fraction,
+        "test_fraction": args.test_fraction,
+        "seed": args.seed,
+        "augmentation_policy": args.augmentation_policy,
+        "augmentation_repeats": max(2, args.augmentation_repeats)
+        if args.augmentation_policy == "balanced" else max(1, args.augmentation_repeats),
+        "augmentation_depth": args.augmentation_depth,
+        "robust_validation": args.robust_validation,
+        "robust_validation_conditions": list(ROBUST_SELECTION_CONDITIONS) if args.robust_validation else [],
+    }
+
+
 def main() -> None:
     args = parse_args()
     random.seed(args.seed)
@@ -89,14 +128,24 @@ def main() -> None:
     config = ModelConfig(forensic_mode=args.forensic_mode, forensic_dim=forensic_dim)
     if args.consistency_weight < 0 or args.worst_group_weight < 0:
         raise ValueError("Consistency and worst-group weights must be non-negative")
+    if not 0.0 <= args.robust_validation_weight <= 1.0:
+        raise ValueError("--robust-validation-weight must be in [0, 1]")
     if (args.consistency_weight or args.worst_group_weight) and args.augmentation_policy != "balanced":
         raise ValueError("Paired consistency and worst-group loss require --augmentation-policy balanced")
 
+    expected_manifest = _cache_manifest(args, config, rows)
     if args.cache and args.cache.exists():
         cached = torch.load(args.cache, map_location="cpu", weights_only=True)
+        if cached.get("manifest") != expected_manifest:
+            raise ValueError(
+                "Feature cache does not match the dataset, split, encoder, or augmentation settings; "
+                "use a new cache path or rebuild it"
+            )
         train_x, train_y = cached["train_features"], cached["train_labels"]
         val_x, val_y = cached["val_features"], cached["val_labels"]
         test_x, test_y = cached.get("test_features"), cached.get("test_labels")
+        robust_val_x, robust_val_y = cached.get("robust_val_features"), cached.get("robust_val_labels")
+        robust_val_conditions = cached.get("robust_val_conditions")
         train_groups = cached.get("train_groups")
         train_original_indices = cached.get("train_original_indices")
         cache_policy = cached.get("augmentation_policy", "random")
@@ -121,6 +170,11 @@ def main() -> None:
             )
             train_groups = train_original_indices = None
         val_x, val_y, _ = extract_features(val_rows, encoders, args.feature_batch_size)
+        robust_val_x = robust_val_y = robust_val_conditions = None
+        if args.robust_validation:
+            robust_val_x, robust_val_y, _, robust_val_conditions = extract_condition_features(
+                val_rows, encoders, args.feature_batch_size, ROBUST_SELECTION_CONDITIONS, args.seed
+            )
         test_x = test_y = None
         if args.report_test_metrics:
             test_x, test_y, _ = extract_features(test_rows, encoders, args.feature_batch_size)
@@ -132,7 +186,16 @@ def main() -> None:
                     "train_labels": train_y,
                     "val_features": val_x,
                     "val_labels": val_y,
+                    "manifest": expected_manifest,
                     "augmentation_policy": args.augmentation_policy,
+                    **(
+                        {
+                            "robust_val_features": robust_val_x,
+                            "robust_val_labels": robust_val_y,
+                            "robust_val_conditions": robust_val_conditions,
+                        }
+                        if robust_val_x is not None and robust_val_y is not None else {}
+                    ),
                     **(
                         {"train_groups": train_groups, "train_original_indices": train_original_indices}
                         if train_groups is not None and train_original_indices is not None else {}
@@ -180,6 +243,8 @@ def main() -> None:
     best_state: dict[str, torch.Tensor] | None = None
     best_loss, stale = float("inf"), 0
     val_x_device, val_y_device = val_x.to(device), val_y.to(device)
+    robust_val_x_device = robust_val_x.to(device) if robust_val_x is not None else None
+    robust_val_y_device = robust_val_y.to(device) if robust_val_y is not None else None
     for epoch in range(1, args.epochs + 1):
         head.train()
         batches = original_loader if args.augmentation_policy == "balanced" else loader
@@ -222,10 +287,32 @@ def main() -> None:
         head.eval()
         with torch.no_grad():
             val_logits = head(val_x_device)
-            val_loss = float(criterion(val_logits, val_y_device))
-        print(f"epoch={epoch:03d} val_loss={val_loss:.5f}")
-        if val_loss < best_loss - 1e-5:
-            best_loss, stale = val_loss, 0
+            clean_val_loss = criterion(val_logits, val_y_device)
+            robust_mean_loss = robust_worst_loss = clean_val_loss
+            if robust_val_x_device is not None and robust_val_y_device is not None:
+                robust_logits = head(robust_val_x_device)
+                condition_size = len(val_rows)
+                condition_losses = torch.stack([
+                    criterion(
+                        robust_logits[start : start + condition_size],
+                        robust_val_y_device[start : start + condition_size],
+                    )
+                    for start in range(0, len(robust_logits), condition_size)
+                ])
+                robust_mean_loss = condition_losses.mean()
+                robust_worst_loss = condition_losses.max()
+            robust_selection_loss = 0.5 * (robust_mean_loss + robust_worst_loss)
+            selection_loss = (
+                (1 - args.robust_validation_weight) * clean_val_loss
+                + args.robust_validation_weight * robust_selection_loss
+            )
+        print(
+            f"epoch={epoch:03d} clean={float(clean_val_loss):.5f} "
+            f"robust_mean={float(robust_mean_loss):.5f} robust_worst={float(robust_worst_loss):.5f} "
+            f"selection={float(selection_loss):.5f}"
+        )
+        if float(selection_loss) < best_loss - 1e-5:
+            best_loss, stale = float(selection_loss), 0
             best_state = {key: value.detach().cpu().clone() for key, value in head.state_dict().items()}
         else:
             stale += 1
@@ -237,9 +324,26 @@ def main() -> None:
     head.load_state_dict(best_state)
     head.to("cpu").eval()
     with torch.no_grad():
-        logits = head(val_x)
-    temperature = fit_temperature(logits, val_y)
-    metrics = classification_metrics(val_y, torch.sigmoid(logits / temperature))
+        clean_logits = head(val_x)
+        calibration_logits = clean_logits
+        calibration_labels = val_y
+        if robust_val_x is not None and robust_val_y is not None:
+            calibration_logits = torch.cat((clean_logits, head(robust_val_x)))
+            calibration_labels = torch.cat((val_y, robust_val_y))
+    temperature = fit_temperature(calibration_logits, calibration_labels)
+    calibration_probabilities = torch.sigmoid(calibration_logits / temperature)
+    threshold = select_threshold(calibration_labels, calibration_probabilities, args.threshold_objective)
+    metrics = classification_metrics(val_y, torch.sigmoid(clean_logits / temperature), threshold)
+    robust_validation_metrics = None
+    if robust_val_x is not None and robust_val_y is not None:
+        with torch.no_grad():
+            robust_probabilities = torch.sigmoid(head(robust_val_x) / temperature)
+        robust_validation_metrics = {}
+        for condition in ROBUST_SELECTION_CONDITIONS:
+            mask = torch.tensor([value == condition for value in robust_val_conditions], dtype=torch.bool)
+            robust_validation_metrics[condition] = classification_metrics(
+                robust_val_y[mask], robust_probabilities[mask], threshold
+            )
     test_metrics = None
     if args.report_test_metrics:
         if test_x is None or test_y is None:
@@ -247,7 +351,7 @@ def main() -> None:
             test_x, test_y, _ = extract_features(test_rows, encoders, args.feature_batch_size)
             del encoders
         with torch.no_grad():
-            test_metrics = classification_metrics(test_y, torch.sigmoid(head(test_x) / temperature))
+            test_metrics = classification_metrics(test_y, torch.sigmoid(head(test_x) / temperature), threshold)
     metadata = {
         "train_images": len(train_rows),
         "validation_images": len(val_rows),
@@ -262,6 +366,11 @@ def main() -> None:
         "augmentation_policy": args.augmentation_policy,
         "consistency_weight": args.consistency_weight,
         "worst_group_weight": args.worst_group_weight,
+        "robust_validation": args.robust_validation,
+        "robust_validation_weight": args.robust_validation_weight,
+        "robust_validation_metrics": robust_validation_metrics,
+        "threshold": threshold,
+        "threshold_objective": args.threshold_objective,
         "modality_dropout": args.modality_dropout,
         "fft_dropout": args.fft_dropout,
         "initialized_from_laplacian": str(args.initialize_from_laplacian) if args.initialize_from_laplacian else None,
@@ -274,7 +383,9 @@ def main() -> None:
             {
                 "checkpoint": str(args.output),
                 "temperature": temperature,
+                "threshold": threshold,
                 "validation": metrics,
+                "robust_validation": robust_validation_metrics,
                 **({"test": test_metrics} if test_metrics is not None else {}),
             },
             indent=2,

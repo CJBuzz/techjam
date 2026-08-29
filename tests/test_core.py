@@ -7,8 +7,22 @@ import numpy as np
 import torch
 from PIL import Image
 
-from aigc_detector.data import DeterministicTransform, RobustTransform, load_labeled_paths, stratified_split, stratified_train_val_test_split
-from aigc_detector.model import ExpertMixtureHead, FrozenEncoders, FusionHead, ModelConfig, image_quality_statistics
+from aigc_detector.data import (
+    ROBUSTNESS_CONDITIONS,
+    DeterministicTransform,
+    RobustTransform,
+    load_labeled_paths,
+    stratified_split,
+    stratified_train_val_test_split,
+)
+from aigc_detector.model import (
+    AdaptiveTriExpertHead,
+    ExpertMixtureHead,
+    FrozenEncoders,
+    FusionHead,
+    ModelConfig,
+    image_quality_statistics,
+)
 
 
 class CoreTests(unittest.TestCase):
@@ -36,6 +50,13 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(random.random(), expected_python)
         self.assertEqual(np.random.random(), expected_numpy)
         self.assertTrue(np.array_equal(first, np.asarray(transform(image))))
+
+    def test_every_exact_challenge_condition_preserves_shape(self) -> None:
+        image = Image.fromarray(np.full((40, 60, 3), 127, dtype=np.uint8), "RGB")
+        for condition in ROBUSTNESS_CONDITIONS:
+            transformed = DeterministicTransform(condition, 42, "/example/image.png", 0)(image)
+            self.assertEqual(transformed.mode, "RGB")
+            self.assertEqual(transformed.size, image.size)
 
     def test_folder_loading_and_split_are_balanced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -73,6 +94,18 @@ class CoreTests(unittest.TestCase):
             forensic_mode="laplacian_fft", forensic_dim=2560, head_type="mixture", gate_mode="fixed"
         ))
         self.assertTrue(torch.equal(fixed.gate_weights(features), torch.full((4,), 0.5)))
+
+    def test_three_expert_mixture_shapes_and_gate_prior(self) -> None:
+        config = ModelConfig(
+            forensic_mode="laplacian_fft", forensic_dim=2560, head_type="tri_mixture"
+        )
+        head = AdaptiveTriExpertHead(config).eval()
+        features = torch.zeros(4, 3072)
+        self.assertEqual(tuple(head(features).shape), (4,))
+        weights = head.gate_weights(features)
+        self.assertEqual(tuple(weights.shape), (4, 3))
+        self.assertTrue(torch.allclose(weights.sum(1), torch.ones(4), atol=1e-6))
+        self.assertTrue(torch.allclose(weights[0], torch.tensor((0.45, 0.35, 0.20)), atol=1e-5))
 
     def test_quality_statistics_are_finite(self) -> None:
         stats = image_quality_statistics([Image.new("RGB", (32, 48), (127, 127, 127))])
