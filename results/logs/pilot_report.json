@@ -1,0 +1,140 @@
+{
+  "batch_size": 4,
+  "conditions": 16,
+  "configuration_hash": "9199b8664536bcec9c0d68aa28a98911486cc282f1fdeadbaa639dcd9ac36db4",
+  "elapsed_seconds": 821.6111985849857,
+  "method": "sd15_vae_posterior_mode",
+  "mode": "pilot",
+  "peak_reserved_bytes": 5840568320,
+  "rows_per_condition": 200,
+  "summaries": [
+    {
+      "condition": "clean",
+      "elapsed_seconds": 49.22162009999738,
+      "reconstruction_bytes": 78321629,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "f013456ab9c7c12652d79b3a51a7109ce2957a6cb733b593f46942f9b34f8da7"
+    },
+    {
+      "condition": "jpeg_q90",
+      "elapsed_seconds": 49.78684426599648,
+      "reconstruction_bytes": 78242130,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "0c43d0d12ab52233ae0e765dedf9b5ffe16cd6c845d507a1e993478ae1e841af"
+    },
+    {
+      "condition": "jpeg_q70",
+      "elapsed_seconds": 49.89869145400007,
+      "reconstruction_bytes": 79534587,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "d2c1fe70c47ec1102efccb8b22d70dbcdf5a0ed530ca852cfdf24fdb2661eb08"
+    },
+    {
+      "condition": "jpeg_q50",
+      "elapsed_seconds": 49.429665383999236,
+      "reconstruction_bytes": 79298258,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "d351ac2539edee775fd0e06d2ad5908962bc950f8358f49dba64f8d17205cf99"
+    },
+    {
+      "condition": "jpeg_q30",
+      "elapsed_seconds": 49.717643674026476,
+      "reconstruction_bytes": 77214002,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "9508e2645b3b365228929b0c56bc6d53f1e7c1cb6b8f83223b776d2032e62b0a"
+    },
+    {
+      "condition": "blur_0.5",
+      "elapsed_seconds": 52.08166389801772,
+      "reconstruction_bytes": 75493911,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "3cfdb6c3c98bdd2ecdc819a1f9942b927f0409fbc3a6b01d021c441ea8cb65ad"
+    },
+    {
+      "condition": "blur_1",
+      "elapsed_seconds": 52.40715781401377,
+      "reconstruction_bytes": 68414125,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "00c7d69572ab21e7b164ab34aed32597150d552bc5fad255a229d757a4e16b45"
+    },
+    {
+      "condition": "blur_2",
+      "elapsed_seconds": 52.18611906800652,
+      "reconstruction_bytes": 59545527,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "98c42bd71fe10c7c130e81d8d7f667bd18e2dad920c7aaabece57bbe44dfd306"
+    },
+    {
+      "condition": "resize_0.5x",
+      "elapsed_seconds": 51.23701981600607,
+      "reconstruction_bytes": 65405545,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "bc998fa4f007f819b42b87be446865b450173f2e352ad5ff4b87f307966190cd"
+    },
+    {
+      "condition": "resize_0.25x",
+      "elapsed_seconds": 50.65324760801741,
+      "reconstruction_bytes": 57788819,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "bec46078076fe966b84d31f848821b15c58cc6fefdf4c4adb70c36f63f1e378f"
+    },
+    {
+      "condition": "noise_0.02",
+      "elapsed_seconds": 58.11857579599018,
+      "reconstruction_bytes": 86816435,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "221e510e364cc2b25136b18e1bc387d0945154b9a0e800972551ace3915e0d4a"
+    },
+    {
+      "condition": "noise_0.05",
+      "elapsed_seconds": 53.72452796899597,
+      "reconstruction_bytes": 97489087,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "46ff00841faa98297437dedf1b16ce60f4ecdc6a03bddac476b6c6eadcd14bb5"
+    },
+    {
+      "condition": "noise_0.1",
+      "elapsed_seconds": 51.18945732500288,
+      "reconstruction_bytes": 108922679,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "fe3ee3e55b20fcb4c0118ea255411b9e4a310120c3da595d943b05fa331b7f30"
+    },
+    {
+      "condition": "color_pm10pct",
+      "elapsed_seconds": 50.63146545700147,
+      "reconstruction_bytes": 77330007,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "ee4f7f3ba0d146ea9404d3395697ae5c37906ba5bd614c120c02ac8a606476de"
+    },
+    {
+      "condition": "color_pm20pct",
+      "elapsed_seconds": 50.52221036501578,
+      "reconstruction_bytes": 75465061,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "e25d22dc338e48ec65086f6f7a298149b2f6bb953041e74b3d63494817a86918"
+    },
+    {
+      "condition": "crop_0.8x",
+      "elapsed_seconds": 50.80041443099617,
+      "reconstruction_bytes": 78684807,
+      "retries": 0,
+      "rows": 200,
+      "score_sha256": "35a894776ee3b1186aaf43f5e0425b7a878bbc2d8fb8dd431ec31014e79dbda1"
+    }
+  ]
+}

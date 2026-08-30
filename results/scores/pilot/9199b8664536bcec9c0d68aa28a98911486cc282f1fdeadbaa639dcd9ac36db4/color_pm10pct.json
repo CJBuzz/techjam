@@ -1,0 +1,8 @@
+{
+  "condition": "color_pm10pct",
+  "elapsed_seconds": 50.63146545700147,
+  "reconstruction_bytes": 77330007,
+  "retries": 0,
+  "rows": 200,
+  "score_sha256": "ee4f7f3ba0d146ea9404d3395697ae5c37906ba5bd614c120c02ac8a606476de"
+}

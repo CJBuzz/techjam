@@ -1,0 +1,30 @@
+{
+  "files": {
+    "blur_2": {
+      "configuration_hash": "94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad",
+      "path": "sd15_vae_fft/results/scores/production/94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad/blur_2.parquet",
+      "sha256": "d024a968123646f92b52359134a774fa8fd30f69277b611c87f6f8474d98a5d3"
+    },
+    "clean": {
+      "configuration_hash": "9199b8664536bcec9c0d68aa28a98911486cc282f1fdeadbaa639dcd9ac36db4",
+      "path": "sd15_vae_fft/results/scores/production/9199b8664536bcec9c0d68aa28a98911486cc282f1fdeadbaa639dcd9ac36db4/clean.parquet",
+      "sha256": "3ed422cf054f76406b0485aa45104a401f8fe669ee42e98f5e65b61bd184c5f6"
+    },
+    "jpeg_q30": {
+      "configuration_hash": "94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad",
+      "path": "sd15_vae_fft/results/scores/production/94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad/jpeg_q30.parquet",
+      "sha256": "4380d440a5d12aaf0ab560abb240c0bff76d72e576d73e75a6edfb87259eb9d7"
+    },
+    "resize_0.25x": {
+      "configuration_hash": "94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad",
+      "path": "sd15_vae_fft/results/scores/production/94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad/resize_0.25x.parquet",
+      "sha256": "f463ef79b47c078e60a04913f3e7ce38c7f8e7844d562b577410ba68b0017f5e"
+    }
+  },
+  "label_sha256": "0e0ec3902ce3f07e08b3651c8972af71fae07447f9049e62c7c7176e9d525c7f",
+  "note": "Config hash differs only because the runner gained a condition selector; model/preprocessing/metric configuration is unchanged.",
+  "scope": "completed clean plus user-selected production cells",
+  "score": "fft_high_bandmean_ratio",
+  "score_direction": 1,
+  "scorer_sha256": "e52f4c1165f9e5cea958cd02d368d3946df696c098d98147540382fa8872c09d"
+}

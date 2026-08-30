@@ -1,0 +1,8 @@
+{
+  "condition": "noise_0.05",
+  "elapsed_seconds": 53.72452796899597,
+  "reconstruction_bytes": 97489087,
+  "retries": 0,
+  "rows": 200,
+  "score_sha256": "46ff00841faa98297437dedf1b16ce60f4ecdc6a03bddac476b6c6eadcd14bb5"
+}

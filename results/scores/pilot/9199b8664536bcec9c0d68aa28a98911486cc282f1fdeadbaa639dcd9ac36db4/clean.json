@@ -1,0 +1,8 @@
+{
+  "condition": "clean",
+  "elapsed_seconds": 49.22162009999738,
+  "reconstruction_bytes": 78321629,
+  "retries": 0,
+  "rows": 200,
+  "score_sha256": "f013456ab9c7c12652d79b3a51a7109ce2957a6cb733b593f46942f9b34f8da7"
+}

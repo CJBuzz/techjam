@@ -1,0 +1,40 @@
+{
+  "batch_size": 4,
+  "conditions": [
+    "jpeg_q30",
+    "blur_2",
+    "resize_0.25x"
+  ],
+  "configuration_hash": "94bed5836585cf21612a250296de72016ee4db90b4920f26e85c1da9dff2ffad",
+  "elapsed_seconds": 9137.848294263997,
+  "method": "sd15_vae_posterior_mode",
+  "mode": "production",
+  "peak_reserved_bytes": 5842665472,
+  "rows_per_condition": 11841,
+  "summaries": [
+    {
+      "condition": "jpeg_q30",
+      "elapsed_seconds": 2958.8718220849987,
+      "reconstruction_bytes": 4666594883,
+      "retries": 0,
+      "rows": 11841,
+      "score_sha256": "4380d440a5d12aaf0ab560abb240c0bff76d72e576d73e75a6edfb87259eb9d7"
+    },
+    {
+      "condition": "blur_2",
+      "elapsed_seconds": 3136.9941027130117,
+      "reconstruction_bytes": 3590444989,
+      "retries": 0,
+      "rows": 11841,
+      "score_sha256": "d024a968123646f92b52359134a774fa8fd30f69277b611c87f6f8474d98a5d3"
+    },
+    {
+      "condition": "resize_0.25x",
+      "elapsed_seconds": 3041.9570523909933,
+      "reconstruction_bytes": 3483597501,
+      "retries": 0,
+      "rows": 11841,
+      "score_sha256": "f463ef79b47c078e60a04913f3e7ce38c7f8e7844d562b577410ba68b0017f5e"
+    }
+  ]
+}

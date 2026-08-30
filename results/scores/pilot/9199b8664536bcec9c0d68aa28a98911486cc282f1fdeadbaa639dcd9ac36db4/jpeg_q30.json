@@ -1,0 +1,8 @@
+{
+  "condition": "jpeg_q30",
+  "elapsed_seconds": 49.717643674026476,
+  "reconstruction_bytes": 77214002,
+  "retries": 0,
+  "rows": 200,
+  "score_sha256": "9508e2645b3b365228929b0c56bc6d53f1e7c1cb6b8f83223b776d2032e62b0a"
+}
