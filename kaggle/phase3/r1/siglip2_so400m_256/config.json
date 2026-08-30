@@ -1,0 +1,41 @@
+{
+  "experiment": "r1",
+  "backbone": "siglip2_so400m_256",
+  "input_resolution": 256,
+  "seed": 42,
+  "precision": "fp16",
+  "max_wall_minutes": 570,
+  "dataloader_workers": 2,
+  "gradient_accumulation_steps": 4,
+  "gradient_checkpointing": true,
+  "selection_split": "validation",
+  "final_test_evaluated": false,
+  "runtime_internet_required": false,
+  "baseline_clean_balanced_accuracy": 0.9681,
+  "distributed": {
+    "enabled": true,
+    "backend": "nccl",
+    "expected_gpus": 2
+  },
+  "data": {
+    "manifest": "/kaggle/input/track5-phase3-data/train_validation_manifest.jsonl"
+  },
+  "model": {
+    "asset_path": "/kaggle/input/track5-siglip2-so400m-256",
+    "minimum_gpu_memory_gb": 15,
+    "optional": true
+  },
+  "training": {
+    "modes": [
+      "linear_head",
+      "last2"
+    ],
+    "max_train_examples": 25000,
+    "epochs": 2,
+    "max_steps": 0,
+    "batch_size_per_gpu": 8,
+    "validation_batch_size": 16,
+    "learning_rate": 0.00002,
+    "weight_decay": 0.05
+  }
+}

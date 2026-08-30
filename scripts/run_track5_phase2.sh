@@ -50,6 +50,22 @@ json_valid() {
   [[ -f "$path" ]] && .venv/bin/python -m aigc_detector.phase2 validate-artifact --path "$path" --stage "$stage" >/dev/null 2>&1
 }
 
+e7_completion_valid() {
+  local summary="$TRACK5_ROOT/e7_radial_frequency/validation_summary.json"
+  json_valid "$summary" 9 || return 1
+  .venv/bin/python - "$summary" "$TRACK5_ROOT/e7_radial_frequency/winning_config.json" <<'PY' >/dev/null 2>&1
+import json, pathlib, sys
+summary = json.load(open(sys.argv[1], encoding="utf-8"))
+winner = summary.get("eligible_winner")
+no_winner = summary.get("no_eligible_candidate") is True
+if winner is None and no_winner and summary.get("reason"):
+    raise SystemExit(0)
+if winner is not None and pathlib.Path(sys.argv[2]).is_file():
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
 stage_complete() {
   local stage="$1"
   local override="PHASE2_STAGE_${stage}_ARTIFACT"
@@ -65,7 +81,7 @@ stage_complete() {
     6) for mode in fixed global adaptive; do json_valid "$TRACK5_ROOT/e4b_adaptive_fusion/$mode/summary.json" 6 && [[ -s "$TRACK5_ROOT/e4b_adaptive_fusion/$mode/model.pt" ]] || return 1; done ;;
     7) json_valid "$TRACK5_ROOT/e4c_gate_intervention/intervention_summary.json" 7 ;;
     8) json_valid "$TRACK5_ROOT/e6_scale_consistency/validation_summary.json" 8 && [[ -s "$TRACK5_ROOT/e6_scale_consistency/winning_config.json" ]] ;;
-    9) json_valid "$TRACK5_ROOT/e7_radial_frequency/validation_summary.json" 9 && [[ -s "$TRACK5_ROOT/e7_radial_frequency/winning_config.json" ]] ;;
+    9) e7_completion_valid ;;
     10) json_valid "$PHASE2_ROOT/recommended_candidate.json" 10 && [[ -s "$PHASE2_ROOT/phase2_summary.json" ]] ;;
     *) return 1 ;;
   esac

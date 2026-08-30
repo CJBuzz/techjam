@@ -103,7 +103,12 @@ class Phase2Tests(unittest.TestCase):
                 path = root / relative; path.parent.mkdir(parents=True, exist_ok=True)
                 row = {**base_row, "worst_transformed_validation_balanced_accuracy": 0.85 + index / 1000,
                        "mode": "adaptive" if experiment.startswith("E4b") else experiment}
-                document = row if experiment.startswith("E4b") else {"selection_split": "validation", "results": [row]}
+                if experiment == "E7":
+                    row["clean_constraint_pass"] = False
+                    document = {"selection_split": "validation", "eligible_winner": None,
+                                "no_eligible_candidate": True, "reason": "clean constraint", "results": [row]}
+                else:
+                    document = row if experiment.startswith("E4b") else {"selection_split": "validation", "results": [row]}
                 path.write_text(json.dumps(document))
             for experiment, relative in DIAGNOSTIC_SOURCES:
                 path = root / relative; path.parent.mkdir(parents=True, exist_ok=True)
@@ -113,8 +118,11 @@ class Phase2Tests(unittest.TestCase):
             self.assertFalse(recommendation["final_test_evaluated"])
             summary = json.loads((root / "phase2/phase2_summary.json").read_text())
             self.assertTrue(all(row["experiment_type"] == "deployment_candidate" for row in summary["results"]))
+            e7 = next(row for row in summary["results"] if row["experiment"] == "E7")
+            self.assertIsNone(e7["validation_rank"])
             diagnostics = json.loads((root / "phase2/diagnostic_summary.json").read_text())
             self.assertTrue(diagnostics["excluded_from_deployment_ranking"])
+            self.assertIn("E7_no_eligible_candidate", {row["experiment"] for row in diagnostics["diagnostics"]})
 
     def test_runner_never_streams_or_runs_final_test_and_locked_script_never_searches(self) -> None:
         runner = RUNNER.read_text()

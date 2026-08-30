@@ -1,0 +1,19 @@
+{
+  "experiment": "r2",
+  "backbone": "unassigned-offline-backbone",
+  "input_resolution": 224,
+  "seed": 42,
+  "precision": "fp16",
+  "max_wall_minutes": 600,
+  "dataloader_workers": 2,
+  "gradient_accumulation_steps": 1,
+  "gradient_checkpointing": false,
+  "selection_split": "validation",
+  "final_test_evaluated": false,
+  "runtime_internet_required": false,
+  "baseline_clean_balanced_accuracy": 0.9681,
+  "distributed": {"enabled": true, "backend": "nccl", "expected_gpus": 2},
+  "data": {},
+  "model": {},
+  "training": {}
+}

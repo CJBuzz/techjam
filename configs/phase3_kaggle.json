@@ -1,0 +1,11 @@
+{
+  "kaggle_username": "REPLACE_USERNAME",
+  "source_dataset": "REPLACE_USERNAME/track5-phase3-source",
+  "training_dataset": "REPLACE_USERNAME/track5-phase3-data",
+  "dinov3_asset": "REPLACE_USERNAME/track5-dinov3-vitl16-lvd1689m",
+  "siglip2_large_asset": "REPLACE_USERNAME/track5-siglip2-large-256",
+  "siglip2_so400m_asset": "REPLACE_USERNAME/track5-siglip2-so400m-256",
+  "enable_so400m": false,
+  "include_r1_r2_in_r7": false,
+  "baseline_clean": 0.9681
+}

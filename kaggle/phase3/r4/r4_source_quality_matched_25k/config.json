@@ -1,0 +1,11 @@
+{
+  "experiment": "r4", "backbone": "from_r3_recommendation", "input_resolution": 256, "seed": 42,
+  "precision": "fp16", "max_wall_minutes": 570, "dataloader_workers": 2,
+  "gradient_accumulation_steps": 8, "gradient_checkpointing": true,
+  "selection_split": "validation", "final_test_evaluated": false, "runtime_internet_required": false,
+  "baseline_clean_balanced_accuracy": 0.9681,
+  "distributed": {"enabled": true, "backend": "nccl", "expected_gpus": 2},
+  "data": {"manifest": "/kaggle/input/track5-phase3-data/train_validation_manifest.jsonl", "read_only_input": true},
+  "model": {"asset_paths": {"dinov3_vitl16": "/kaggle/input/track5-dinov3-vitl16-lvd1689m", "siglip2_large_256": "/kaggle/input/track5-siglip2-large-256", "siglip2_so400m_256": "/kaggle/input/track5-siglip2-so400m-256"}},
+  "training": {"bias_policy": "source_quality_matched", "max_train_examples": 25000, "epochs": 2, "batch_size_per_gpu": 4, "validation_batch_size": 16, "learning_rate": 0.00001, "weight_decay": 0.05}
+}

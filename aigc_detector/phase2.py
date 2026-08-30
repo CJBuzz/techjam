@@ -168,6 +168,12 @@ def aggregate(root: Path) -> dict:
             raise ValueError(f"{experiment} summary is not validation-selected")
         rows = document.get("results") if "results" in document else [document]
         candidates.extend(normalize_candidate(experiment, row, path) for row in rows)
+        if experiment == "E7" and document.get("no_eligible_candidate") is True:
+            diagnostics.append({
+                "experiment": "E7_no_eligible_candidate", "experiment_type": "diagnostic",
+                "source": str(path), "reason": document.get("reason"),
+                "results": rows, "excluded_from_deployment_ranking": True,
+            })
     for experiment, relative in DIAGNOSTIC_SOURCES:
         path = root / relative
         document = _read_json(path)
@@ -180,7 +186,8 @@ def aggregate(root: Path) -> dict:
         diagnostics.append({"experiment": "E7_stability", "experiment_type": "diagnostic",
                             "source": str(stability_path), "excluded_from_deployment_ranking": True})
     ranked = rank_candidates(candidates)
-    winner = min((row for row in ranked if row["validation_rank"] is not None), key=lambda row: row["validation_rank"])
+    eligible = [row for row in ranked if row["validation_rank"] is not None]
+    winner = min(eligible, key=lambda row: row["validation_rank"]) if eligible else None
     output = root / "phase2"
     output.mkdir(parents=True, exist_ok=True)
     document = {"selection_split": "validation", "final_test_evaluated": False,
@@ -193,18 +200,28 @@ def aggregate(root: Path) -> dict:
     (output / "diagnostic_summary.json").write_text(json.dumps({
         "selection_split": "validation", "excluded_from_deployment_ranking": True, "diagnostics": diagnostics,
     }, indent=2) + "\n", encoding="utf-8")
-    recommendation = {
-        "experiment": winner["experiment"], "variant": winner["variant"],
-        "checkpoint_config_paths": [winner["checkpoint_config_artifact"]],
-        "validation_metrics": {key: winner[key] for key in (
-            "clean_validation_balanced_accuracy", "mean_transformed_validation_balanced_accuracy",
-            "worst_transformed_validation_balanced_accuracy", "worst_condition")},
-        "why_it_won": "Highest worst transformed validation balanced accuracy among clean-eligible deployable candidates; ties use mean transformed validation balanced accuracy, then lower inference cost and complexity.",
-        "inference_multiplier": winner["inference_multiplier"],
-        "trainable_parameter_count": winner["trainable_parameter_count"],
-        "clean_constraint_pass": winner["clean_constraint_pass"],
-        "selection_split": "validation", "final_test_evaluated": False,
-    }
+    if winner is None:
+        recommendation = {
+            "experiment": None, "variant": None, "checkpoint_config_paths": [],
+            "validation_metrics": None, "why_it_won": None,
+            "reason": "No deployment candidate passed its validation clean-performance constraint.",
+            "inference_multiplier": None, "trainable_parameter_count": None,
+            "clean_constraint_pass": False, "selection_split": "validation",
+            "final_test_evaluated": False,
+        }
+    else:
+        recommendation = {
+            "experiment": winner["experiment"], "variant": winner["variant"],
+            "checkpoint_config_paths": [winner["checkpoint_config_artifact"]],
+            "validation_metrics": {key: winner[key] for key in (
+                "clean_validation_balanced_accuracy", "mean_transformed_validation_balanced_accuracy",
+                "worst_transformed_validation_balanced_accuracy", "worst_condition")},
+            "why_it_won": "Highest worst transformed validation balanced accuracy among clean-eligible deployable candidates; ties use mean transformed validation balanced accuracy, then lower inference cost and complexity.",
+            "inference_multiplier": winner["inference_multiplier"],
+            "trainable_parameter_count": winner["trainable_parameter_count"],
+            "clean_constraint_pass": winner["clean_constraint_pass"],
+            "selection_split": "validation", "final_test_evaluated": False,
+        }
     (output / "recommended_candidate.json").write_text(json.dumps(recommendation, indent=2) + "\n", encoding="utf-8")
     with (output / "pareto_summary.csv").open("w", newline="", encoding="utf-8") as handle:
         fields = ("candidate", "worst_val_bacc", "mean_val_bacc", "external_auc", "external_recall", "inference_multiplier", "params")
