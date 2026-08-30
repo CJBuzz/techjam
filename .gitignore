@@ -1,5 +1,6 @@
 # Virtual environments and package-manager caches
 .venv/
+.python-runtime/
 .uv-cache/
 .hf-cache/
 .torch-cache/

@@ -85,21 +85,27 @@ def sample_source(output: Path, source: str, per_group: int, seed: int, shuffle_
     state_dir = output / ".prep"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_path = state_dir / f"{source}.jsonl"
-    records = []
+    all_records = []
     if state_path.is_file():
         with state_path.open(encoding="utf-8") as handle:
-            records = [json.loads(line) for line in handle if line.strip()]
+            all_records = [json.loads(line) for line in handle if line.strip()]
+    # A resumed run may lower its quota. Preserve the journal, but use only the
+    # first deterministic quota-sized slice from each class in the final corpus.
+    selected_counts = Counter()
+    records = []
+    for record in all_records:
+        label = record["label"]
+        if selected_counts[label] < per_group:
+            records.append(record)
+            selected_counts[label] += 1
     counts = Counter(record["label"] for record in records)
-    seen_hashes = {record["content_sha256"] for record in records}
-    for record in records:
+    seen_hashes = {record["content_sha256"] for record in all_records}
+    for record in all_records:
         if not (output / record["path"]).is_file():
             raise FileNotFoundError(f"Preparation state references a missing image: {record['path']}")
     if counts[0] == counts[1] == per_group:
         print(f"Reusing completed {source} preparation state: {state_path}")
         return records
-    if counts[0] > per_group or counts[1] > per_group:
-        raise ValueError(f"Preparation state exceeds requested quota for {source}: {dict(counts)}")
-
     dataset = load_dataset(SOURCES[source], split="train", streaming=True)
     feature = dataset.features.get("label") if dataset.features else None
     keep_columns = {"image", "label", "img_id"}
@@ -148,6 +154,27 @@ def sample_source(output: Path, source: str, per_group: int, seed: int, shuffle_
     if counts != Counter({0: per_group, 1: per_group}):
         raise RuntimeError(f"Insufficient {source} examples: {dict(counts)}")
     return records
+
+
+def move_surplus_images(output: Path, selected: list[dict]) -> int:
+    """Move journaled but unselected images outside labeled folders, preserving recovery."""
+    selected_paths = {record["path"] for record in selected}
+    moved = 0
+    for class_name in ("real", "ai"):
+        class_root = output / class_name
+        if not class_root.is_dir():
+            continue
+        for path in class_root.rglob("*"):
+            if not path.is_file():
+                continue
+            relative = path.relative_to(output).as_posix()
+            if relative in selected_paths:
+                continue
+            destination = output / ".surplus" / Path(relative)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            path.replace(destination)
+            moved += 1
+    return moved
 
 
 def deduplicate_and_split(records: list[dict], seed: int, radius: int) -> tuple[list[dict], dict]:
@@ -248,8 +275,10 @@ def main() -> None:
     records = []
     for offset, source in enumerate(("cifake", "sid")):
         records.extend(sample_source(args.output, source, args.per_class_source, args.seed + offset, args.shuffle_buffer))
+    surplus_moved = move_surplus_images(args.output, records)
     write_csv(args.output / "sampled_manifest.csv", records)
     records, audit = deduplicate_and_split(records, args.seed, args.dhash_radius)
+    audit["surplus_images_moved"] = surplus_moved
     write_csv(args.output / "split_manifest.csv", records)
     (args.output / "audit.json").write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
     for state_path in (args.output / ".prep").glob("*.jsonl"):

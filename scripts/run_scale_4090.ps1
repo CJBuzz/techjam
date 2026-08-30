@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet("100k", "200k")]
+    [ValidateSet("40k", "100k", "200k")]
     [string]$Scale = "100k",
     [ValidateSet("Preflight", "Prepare", "Extract", "Train", "Analyze", "All")]
     [string]$Stage = "Preflight",
@@ -14,9 +14,46 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# Do not inherit Python launcher state from an activated environment, IDE, or
+# parent PowerShell process. Quoted values in these variables can make the
+# Windows launcher report exit 103 even when the interpreter exists.
+foreach ($pythonEnvironmentVariable in @(
+    "__PYVENV_LAUNCHER__", "PYTHONHOME", "PYTHONEXECUTABLE",
+    "_PYTHON_PROJECT_BASE", "VIRTUAL_ENV", "UV_PYTHON"
+)) {
+    Remove-Item -LiteralPath "Env:$pythonEnvironmentVariable" -ErrorAction SilentlyContinue
+}
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$python = Join-Path $projectRoot ".venv\Scripts\python.exe"
-$perClassSource = if ($Scale -eq "100k") { 25000 } else { 50000 }
+$venvPython = Join-Path $projectRoot ".venv\Scripts\python.exe"
+$venvConfig = Join-Path $projectRoot ".venv\pyvenv.cfg"
+$venvSitePackages = Join-Path $projectRoot ".venv\Lib\site-packages"
+$projectPython = Join-Path $projectRoot ".python-runtime\python.exe"
+$python = if (Test-Path -LiteralPath $projectPython) { $projectPython } else { $venvPython }
+if ((Test-Path -LiteralPath $projectPython) -and (Test-Path -LiteralPath $venvSitePackages)) {
+    $env:PYTHONPATH = "$projectRoot$([IO.Path]::PathSeparator)$venvSitePackages"
+}
+
+# Windows PowerShell 5.1 can trigger exit 103 in uv's venv redirector when the
+# managed Python path contains spaces. Invoke the real interpreter directly and
+# retain this isolated environment's site-packages explicitly.
+if (-not (Test-Path -LiteralPath $projectPython) -and
+    (Test-Path -LiteralPath $venvConfig) -and (Test-Path -LiteralPath $venvSitePackages)) {
+    $homeLine = Get-Content -LiteralPath $venvConfig | Where-Object { $_ -match '^home\s*=' } | Select-Object -First 1
+    if ($homeLine) {
+        $baseHome = ($homeLine -split '=', 2)[1].Trim().Trim('"')
+        $basePython = Join-Path $baseHome "python.exe"
+        if (Test-Path -LiteralPath $basePython) {
+            $python = $basePython
+            $env:PYTHONPATH = "$projectRoot$([IO.Path]::PathSeparator)$venvSitePackages"
+        }
+    }
+}
+$perClassSource = switch ($Scale) {
+    "40k" { 10000 }
+    "100k" { 25000 }
+    "200k" { 50000 }
+}
 $shuffleBuffer = 256
 $dataRoot = Join-Path $projectRoot "data\mixed_$Scale"
 $artifactRoot = Join-Path $projectRoot "artifacts\mixed_$Scale"
@@ -29,8 +66,9 @@ $combinedCheckpoint = Join-Path $artifactRoot "balanced_consistency_w01.pt"
 $calibratedCheckpoint = Join-Path $artifactRoot "balanced_consistency_w01_calibrated.pt"
 
 function Invoke-Python {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
-    & $python @Arguments
+    # Use PowerShell's automatic unbound-argument array. This preserves native
+    # flags such as -c and -m under both Windows PowerShell 5.1 and pwsh 7.
+    & $python @args
     if ($LASTEXITCODE -ne 0) { throw "Python command failed with exit code $LASTEXITCODE" }
 }
 
@@ -38,16 +76,7 @@ function Assert-Cuda {
     if (-not (Test-Path -LiteralPath $python)) {
         throw "Missing .venv. Run scripts\setup_4090.ps1 first."
     }
-    Invoke-Python -c @'
-import shutil, torch
-assert torch.cuda.is_available(), "CUDA is unavailable; run scripts/setup_4090.ps1"
-name = torch.cuda.get_device_name(0)
-assert "4090" in name, f"Expected RTX 4090, found {name}"
-free, total = torch.cuda.mem_get_info()
-disk = shutil.disk_usage(".")
-print(f"GPU: {name}; free VRAM: {free/2**30:.1f}/{total/2**30:.1f} GiB")
-print(f"Workspace disk free: {disk.free/2**30:.1f} GiB")
-'@
+    Invoke-Python scripts/preflight_4090.py
 }
 
 function Assert-PreparedData {

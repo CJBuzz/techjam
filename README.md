@@ -280,8 +280,9 @@ PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k 
 
 Use `-FeatureBatchSize 16` if another application occupies substantial VRAM. A clean 24 GiB 4090
 should normally start at 32. The head is small and normally supports `-HeadBatchSize 256`.
-After the 100K run completes comfortably, repeat with `-Scale 200k`; it uses 50K images per
-class-source cell. `-Stage All` is available, but separate stages are recommended for the first run.
+For a deadline-oriented run, `-Scale 40k` uses 10K images per class-source cell. After the 100K
+run completes comfortably, repeat with `-Scale 200k`; it uses 50K images per class-source cell.
+`-Stage All` is available, but separate stages are recommended for the first run.
 
 Extraction includes train, model-selection, calibration, and robust model-selection features but
 deliberately excludes reserved-test features. Training and analysis therefore cannot accidentally
