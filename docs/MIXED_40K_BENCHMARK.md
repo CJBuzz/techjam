@@ -92,3 +92,41 @@ The next scientifically useful measurement is the untouched reserved test,
 followed by the B-Free FLUX and Stable Diffusion 3.5 benchmark under the protocol
 in `docs/GENERALIZATION_PROTOCOL.md`. Results from those sets must not be used to
 retune this checkpoint if they are to remain final-test evidence.
+
+## Provisional 100K checkpoint compatibility comparison
+
+The unpacked Kaggle checkpoint
+`artifacts/mixed_100k_balanced_consistency_w01_mixed_calibrated` was restored to
+the loadable file
+`artifacts/mixed_100k_balanced_consistency_w01_mixed_calibrated.pt`. It contains
+the trained Laplacian + FFT fusion-head weights, temperature 0.77410257, and
+embedded validation metadata. Because it does not store a selected balanced
+threshold, evaluation preserves its default threshold of 0.5.
+
+Both the 40K and 100K weights were run over the same 4,000-image mixed-40K
+model-selection set and the same deterministic 16-condition matrix:
+
+| Metric | 40K weights | 100K weights | Change |
+|---|---:|---:|---:|
+| Clean accuracy | 98.33% | **99.33%** | +1.00 pp |
+| Mean transformed accuracy | 95.99% | **96.94%** | +0.95 pp |
+| Worst transformed accuracy | 91.13% | **93.38%** | +2.25 pp |
+| Worst condition | Resize 0.25 | Resize 0.25 | -- |
+
+The 100K weights improve 14 of 15 transformed conditions. The small regressions
+are color 0.8 (-0.08 percentage points) and color 1.2 (-0.23 percentage points).
+The largest gains are resize 0.25 (+2.25 points), noise sigma 0.10 (+1.83
+points), blur sigma 2.0 (+1.58 points), and resize 0.5 (+1.48 points). The full
+diagnostic output is stored in
+`artifacts/mixed_100k_on_mixed_40k_model_selection_severity.json`.
+
+This comparison is **not an uncontaminated held-out benchmark**. The local copy
+does not include the mixed-100K split manifest, so exact hashes and duplicate
+groups cannot be checked against the 40K evaluation rows. Both corpora were
+sampled from CIFAKE and SID_Set, and some or all of the 40K model-selection
+images may have appeared in the 100K training data. The numbers establish that
+the restored weights load correctly and are operationally stronger on this
+shared-source diagnostic set; they must not be used as evidence of
+cross-generator generalization. A fair model-selection comparison requires the
+original mixed-100K manifest, and final generalization evidence still requires
+the untouched B-Free evaluation.
