@@ -1,0 +1,19 @@
+experiment: raw_image_fft_robustness
+seed: 42
+preprocessing:
+  size: 512
+  resampling: pillow_bicubic
+conditions:
+  clean: [clean, 0.0]
+  jpeg_q30: [jpeg, 30.0]
+  blur_2: [blur, 2.0]
+  resize_0.25x: [resize, 0.25]
+metrics:
+  primary: raw_fft_high_bandmean_ratio
+  score_direction: 1
+  bands: [0.25, 0.5]
+runtime:
+  backend: cpu
+  batch_size: 16
+  checkpoint_rows: 100
+

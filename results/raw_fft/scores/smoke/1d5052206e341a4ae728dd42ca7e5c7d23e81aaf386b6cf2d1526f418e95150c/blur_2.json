@@ -1,0 +1,12 @@
+{
+  "condition": "blur_2",
+  "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+  "exact_input_identity": true,
+  "fallback_tier": "E0",
+  "input_mismatch_count": 0,
+  "path": "sd15_vae_fft/results/raw_fft/scores/smoke/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/blur_2.parquet",
+  "rows": 16,
+  "score_sha256": "3fe65986dca6c182d9e8287675f7a57a9193ffa9842349f7b0eb03aaf0441fd5",
+  "status": "complete",
+  "unique_image_ids": 16
+}

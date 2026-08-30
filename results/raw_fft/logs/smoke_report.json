@@ -1,0 +1,123 @@
+{
+  "conditions": [
+    {
+      "condition": "clean",
+      "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+      "exact_input_identity": true,
+      "fallback_tier": "E0",
+      "input_mismatch_count": 0,
+      "path": "sd15_vae_fft/results/raw_fft/scores/smoke/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/clean.parquet",
+      "rows": 16,
+      "score_sha256": "1a7c644fc46a232be9498e5064f3335a34888c2eb4a30be6ffd26532ac236575",
+      "status": "complete",
+      "unique_image_ids": 16
+    },
+    {
+      "condition": "jpeg_q30",
+      "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+      "exact_input_identity": true,
+      "fallback_tier": "E0",
+      "input_mismatch_count": 0,
+      "path": "sd15_vae_fft/results/raw_fft/scores/smoke/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/jpeg_q30.parquet",
+      "rows": 16,
+      "score_sha256": "d95266da8a962b34477f24334797b12848aeda9826158d04be87cba9c49059e6",
+      "status": "complete",
+      "unique_image_ids": 16
+    },
+    {
+      "condition": "blur_2",
+      "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+      "exact_input_identity": true,
+      "fallback_tier": "E0",
+      "input_mismatch_count": 0,
+      "path": "sd15_vae_fft/results/raw_fft/scores/smoke/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/blur_2.parquet",
+      "rows": 16,
+      "score_sha256": "3fe65986dca6c182d9e8287675f7a57a9193ffa9842349f7b0eb03aaf0441fd5",
+      "status": "complete",
+      "unique_image_ids": 16
+    },
+    {
+      "condition": "resize_0.25x",
+      "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+      "exact_input_identity": true,
+      "fallback_tier": "E0",
+      "input_mismatch_count": 0,
+      "path": "sd15_vae_fft/results/raw_fft/scores/smoke/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/resize_0.25x.parquet",
+      "rows": 16,
+      "score_sha256": "89963f0f248d709c5c2de96d7091eef196dd1e5f41e0a52a8dd48548bce60e68",
+      "status": "complete",
+      "unique_image_ids": 16
+    }
+  ],
+  "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+  "configuration_identity": {
+    "allow_approximate_inputs": false,
+    "backend": "cpu",
+    "batch_size": 16,
+    "config": {
+      "conditions": {
+        "blur_2": [
+          "blur",
+          2.0
+        ],
+        "clean": [
+          "clean",
+          0.0
+        ],
+        "jpeg_q30": [
+          "jpeg",
+          30.0
+        ],
+        "resize_0.25x": [
+          "resize",
+          0.25
+        ]
+      },
+      "experiment": "raw_image_fft_robustness",
+      "metrics": {
+        "bands": [
+          0.25,
+          0.5
+        ],
+        "primary": "raw_fft_high_bandmean_ratio",
+        "score_direction": 1
+      },
+      "preprocessing": {
+        "resampling": "pillow_bicubic",
+        "size": 512
+      },
+      "runtime": {
+        "backend": "cpu",
+        "batch_size": 16,
+        "checkpoint_rows": 100
+      },
+      "seed": 42
+    },
+    "fallback_tier": "E0",
+    "hashes": {
+      "lock": "0c70d2821298593327072d96c1e13b2e4082a46e0a3bef4fe8cd2605c922e7fd",
+      "manifest": "097bb22382f950afdb314d894c8ddd0e69e22b6f73bcf3f80006485db58b16e4",
+      "perturbations": "785b9ac44318bc9931fa4e73f93ad940505b356e3a9f7c2f760bbf28c0321ca6",
+      "preprocessing": "df5769325b99dd0d75f4c9389056ae842211276f1b992ceeae29c5669f52b468",
+      "registry": "35264847b76ae536ae808e62ac7119a1f5200e1cb76e402db9146cfbf33991d0",
+      "runner": "7626e87f1e75e5bb0d13354ad13c86c1aff90feb26906bc7efe5c69b60783b67",
+      "spectral": "3884a5748aaa2bbb07a786ea205444d69bdcc920ec11087e8816bdd550c8c9ae"
+    },
+    "vae_hashes": {
+      "blur_2": "d024a968123646f92b52359134a774fa8fd30f69277b611c87f6f8474d98a5d3",
+      "clean": "3ed422cf054f76406b0485aa45104a401f8fe669ee42e98f5e65b61bd184c5f6",
+      "jpeg_q30": "4380d440a5d12aaf0ab560abb240c0bff76d72e576d73e75a6edfb87259eb9d7",
+      "resize_0.25x": "f463ef79b47c078e60a04913f3e7ce38c7f8e7844d562b577410ba68b0017f5e"
+    },
+    "versions": {
+      "numpy": "2.5.2",
+      "pandas": "3.0.1",
+      "pillow": "12.3.0",
+      "python": "3.12.3",
+      "torch": "2.13.0+cu130"
+    }
+  },
+  "divergence_ledger": [],
+  "mode": "smoke",
+  "status": "complete"
+}
