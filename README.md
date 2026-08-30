@@ -251,6 +251,43 @@ split.
 
 ## Kaggle recommendations
 
+### Local RTX 4090 workflow (Windows)
+
+The local project lock deliberately selects CPU-only PyTorch for portability. Do not run
+`uv sync` for a CUDA environment. On a Windows machine with an RTX 4090, install `uv`, then use
+the dedicated bootstrap script to create an isolated CUDA environment:
+
+```powershell
+winget install --id=astral-sh.uv -e
+PowerShell -ExecutionPolicy Bypass -File scripts\setup_4090.ps1
+PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Stage Preflight
+```
+
+The staged runner defaults to the recommended 100K corpus. Preparation downloads 25K images for
+each SID/CIFAKE class-source cell, excludes SID label 2, deduplicates before assigning duplicate-
+atomic splits, stores lossless PNGs to avoid adding a common JPEG signature, and writes a
+reproducible manifest. Its bounded streaming shuffle prevents high-resolution SID rows from
+exhausting RAM, while per-source preparation journals allow an interrupted download to resume.
+Run each long stage separately so failures are
+easy to resume and inspect:
+
+```powershell
+PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Prepare
+PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Extract
+PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Train
+PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Analyze
+```
+
+Use `-FeatureBatchSize 16` if another application occupies substantial VRAM. A clean 24 GiB 4090
+should normally start at 32. The head is small and normally supports `-HeadBatchSize 256`.
+After the 100K run completes comfortably, repeat with `-Scale 200k`; it uses 50K images per
+class-source cell. `-Stage All` is available, but separate stages are recommended for the first run.
+
+Extraction includes train, model-selection, calibration, and robust model-selection features but
+deliberately excludes reserved-test features. Training and analysis therefore cannot accidentally
+inspect the reserved test set. Do not run the final test or B-Free evaluation until the checkpoint,
+calibration choice, threshold, and augmentation policy are locked.
+
 ### Audited 100K GPU handoff
 
 The reproducible route is to upload the already prepared `data/mixed_100k` directory once as a

@@ -82,41 +82,66 @@ def normalize_label(source: str, row: dict, feature) -> int | None:
 
 
 def sample_source(output: Path, source: str, per_group: int, seed: int, shuffle_buffer: int) -> list[dict]:
+    state_dir = output / ".prep"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state_path = state_dir / f"{source}.jsonl"
+    records = []
+    if state_path.is_file():
+        with state_path.open(encoding="utf-8") as handle:
+            records = [json.loads(line) for line in handle if line.strip()]
+    counts = Counter(record["label"] for record in records)
+    seen_hashes = {record["content_sha256"] for record in records}
+    for record in records:
+        if not (output / record["path"]).is_file():
+            raise FileNotFoundError(f"Preparation state references a missing image: {record['path']}")
+    if counts[0] == counts[1] == per_group:
+        print(f"Reusing completed {source} preparation state: {state_path}")
+        return records
+    if counts[0] > per_group or counts[1] > per_group:
+        raise ValueError(f"Preparation state exceeds requested quota for {source}: {dict(counts)}")
+
     dataset = load_dataset(SOURCES[source], split="train", streaming=True)
     feature = dataset.features.get("label") if dataset.features else None
     keep_columns = {"image", "label", "img_id"}
     unused_columns = [name for name in dataset.column_names if name not in keep_columns]
     dataset = dataset.remove_columns(unused_columns)
     dataset = dataset.shuffle(seed=seed, buffer_size=shuffle_buffer)
-    counts = Counter()
-    records = []
     iterator = iter(dataset)
-    for stream_index, row in enumerate(tqdm(iterator, desc=f"sample {source}")):
-        label = normalize_label(source, row, feature)
-        if label is None or counts[label] >= per_group:
-            continue
-        source_image = row["image"]
-        image = source_image.convert("RGB")
-        source_image.close()
-        digest = content_hash(image)
-        identifier = str(row.get("img_id") or f"shuffle-seed-{seed}-row-{stream_index}")
-        relative = Path("ai" if label else "real") / source / f"{counts[label]:06d}-{digest[:12]}.jpg"
-        destination = output / relative
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        image.save(destination, "JPEG", quality=95, subsampling=0)
-        records.append({
-            "upstream_identifier": identifier, "source": source, "label": label,
-            "class": "ai" if label else "real", "path": relative.as_posix(),
-            "width": image.width, "height": image.height, "content_sha256": digest,
-            "dhash64": f"{dhash(image):016x}",
-        })
-        counts[label] += 1
-        image.close()
-        del image, source_image, row
-        if sum(counts.values()) % 100 == 0:
-            gc.collect()
-        if counts[0] == counts[1] == per_group:
-            break
+    with state_path.open("a", encoding="utf-8", buffering=1) as state_handle:
+        for stream_index, row in enumerate(tqdm(iterator, desc=f"sample {source}")):
+            label = normalize_label(source, row, feature)
+            if label is None or counts[label] >= per_group:
+                continue
+            source_image = row["image"]
+            image = source_image.convert("RGB")
+            source_image.close()
+            digest = content_hash(image)
+            if digest in seen_hashes:
+                image.close()
+                continue
+            identifier = str(row.get("img_id") or f"shuffle-seed-{seed}-row-{stream_index}")
+            relative = Path("ai" if label else "real") / source / f"{counts[label]:06d}-{digest[:12]}.png"
+            destination = output / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            # Lossless output avoids adding a dataset-wide JPEG signature that the
+            # detector could learn as a source/class shortcut.
+            image.save(destination, "PNG", optimize=False)
+            record = {
+                "upstream_identifier": identifier, "source": source, "label": label,
+                "class": "ai" if label else "real", "path": relative.as_posix(),
+                "width": image.width, "height": image.height, "content_sha256": digest,
+                "dhash64": f"{dhash(image):016x}",
+            }
+            records.append(record)
+            state_handle.write(json.dumps(record, separators=(",", ":")) + "\n")
+            seen_hashes.add(digest)
+            counts[label] += 1
+            image.close()
+            del image, source_image, row
+            if sum(counts.values()) % 100 == 0:
+                gc.collect()
+            if counts[0] == counts[1] == per_group:
+                break
     close = getattr(iterator, "close", None)
     if close:
         close()
@@ -206,11 +231,19 @@ def main() -> None:
     parser.add_argument("--output", type=Path, default=Path("data/mixed_100k"))
     parser.add_argument("--per-class-source", type=int, default=25_000)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--shuffle-buffer", type=int, default=100_000)
+    parser.add_argument(
+        "--shuffle-buffer", type=int, default=256,
+        help="Bounded streaming shuffle buffer; large high-resolution SID buffers can exhaust RAM",
+    )
     parser.add_argument("--dhash-radius", type=int, default=4)
     args = parser.parse_args()
-    if args.output.exists() and any(args.output.iterdir()):
-        raise ValueError(f"Output must be absent or empty: {args.output}")
+    if args.shuffle_buffer < 1:
+        raise ValueError("--shuffle-buffer must be positive")
+    if args.output.exists() and any(args.output.iterdir()) and not (args.output / ".prep").is_dir():
+        raise ValueError(
+            f"Output contains data without resumable preparation state: {args.output}. "
+            "Move it aside and start again."
+        )
     args.output.mkdir(parents=True, exist_ok=True)
     records = []
     for offset, source in enumerate(("cifake", "sid")):
@@ -219,6 +252,9 @@ def main() -> None:
     records, audit = deduplicate_and_split(records, args.seed, args.dhash_radius)
     write_csv(args.output / "split_manifest.csv", records)
     (args.output / "audit.json").write_text(json.dumps(audit, indent=2) + "\n", encoding="utf-8")
+    for state_path in (args.output / ".prep").glob("*.jsonl"):
+        state_path.unlink()
+    (args.output / ".prep").rmdir()
     print(json.dumps(audit, indent=2))
 
 
