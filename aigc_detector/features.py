@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Callable
 
 import torch
 from PIL import Image
@@ -40,6 +41,29 @@ def extract_features(
             all_features.append(encoders(images))
             all_labels.append(labels)
             all_paths.extend(paths)
+    return torch.cat(all_features), torch.cat(all_labels), all_paths
+
+
+def extract_features_with_factory(
+    rows: list[tuple[Path, int]],
+    encoders: FrozenEncoders,
+    batch_size: int,
+    transform_factory: Callable[[Path, int], Callable[[Image.Image], Image.Image]],
+    description: str,
+) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Extract one path-specific deterministic view for every original."""
+    all_features: list[torch.Tensor] = []
+    all_labels: list[torch.Tensor] = []
+    all_paths: list[str] = []
+    for start in tqdm(range(0, len(rows), batch_size), desc=description):
+        images, labels = [], []
+        for index, (path, label) in enumerate(rows[start : start + batch_size], start=start):
+            with Image.open(path) as source:
+                images.append(transform_factory(path, index)(source.convert("RGB")))
+            labels.append(label)
+            all_paths.append(str(path))
+        all_features.append(encoders(images))
+        all_labels.append(torch.tensor(labels, dtype=torch.float32))
     return torch.cat(all_features), torch.cat(all_labels), all_paths
 
 

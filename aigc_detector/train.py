@@ -9,7 +9,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from .data import load_labeled_paths, stratified_train_val_test_split
+from .data import load_labeled_paths, load_split_manifest, stratified_train_val_test_split
 from .features import extract_balanced_features, extract_features
 from .metrics import classification_metrics, fit_temperature
 from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, save_checkpoint
@@ -18,6 +18,7 @@ from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, sav
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the frozen two-stream AIGC detector")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing real/ and ai/ folders")
+    parser.add_argument("--split-manifest", type=Path, default=None, help="Persisted duplicate-aware split manifest")
     parser.add_argument("--output", type=Path, default=Path("artifacts/hybrid_detector.pt"))
     parser.add_argument("--cache", type=Path, default=None, help="Optional feature cache (.pt)")
     parser.add_argument("--validation-fraction", type=float, default=0.15)
@@ -75,10 +76,16 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = choose_device(args.device)
-    rows = load_labeled_paths(args.data_dir)
-    train_rows, val_rows, test_rows = stratified_train_val_test_split(
-        rows, args.data_dir, args.validation_fraction, args.test_fraction, args.seed
-    )
+    if args.split_manifest:
+        manifest_splits = load_split_manifest(args.data_dir, args.split_manifest)
+        train_rows, val_rows, test_rows = (
+            manifest_splits["train"], manifest_splits["model_selection"], manifest_splits["test"]
+        )
+    else:
+        rows = load_labeled_paths(args.data_dir)
+        train_rows, val_rows, test_rows = stratified_train_val_test_split(
+            rows, args.data_dir, args.validation_fraction, args.test_fraction, args.seed
+        )
     if not 0.0 <= args.modality_dropout < 1.0:
         raise ValueError("--modality-dropout must be in [0, 1)")
     if not 0.0 <= args.fft_dropout < 1.0:
@@ -96,6 +103,8 @@ def main() -> None:
         cached = torch.load(args.cache, map_location="cpu", weights_only=True)
         train_x, train_y = cached["train_features"], cached["train_labels"]
         val_x, val_y = cached["val_features"], cached["val_labels"]
+        calibration_x = cached.get("calibration_features")
+        calibration_y = cached.get("calibration_labels")
         test_x, test_y = cached.get("test_features"), cached.get("test_labels")
         train_groups = cached.get("train_groups")
         train_original_indices = cached.get("train_original_indices")
@@ -121,6 +130,7 @@ def main() -> None:
             )
             train_groups = train_original_indices = None
         val_x, val_y, _ = extract_features(val_rows, encoders, args.feature_batch_size)
+        calibration_x = calibration_y = None
         test_x = test_y = None
         if args.report_test_metrics:
             test_x, test_y, _ = extract_features(test_rows, encoders, args.feature_batch_size)
@@ -236,10 +246,13 @@ def main() -> None:
     assert best_state is not None
     head.load_state_dict(best_state)
     head.to("cpu").eval()
+    temperature_x = calibration_x if calibration_x is not None else val_x
+    temperature_y = calibration_y if calibration_y is not None else val_y
     with torch.no_grad():
-        logits = head(val_x)
-    temperature = fit_temperature(logits, val_y)
-    metrics = classification_metrics(val_y, torch.sigmoid(logits / temperature))
+        temperature_logits = head(temperature_x)
+        validation_logits = head(val_x)
+    temperature = fit_temperature(temperature_logits, temperature_y)
+    metrics = classification_metrics(val_y, torch.sigmoid(validation_logits / temperature))
     test_metrics = None
     if args.report_test_metrics:
         if test_x is None or test_y is None:
@@ -256,6 +269,9 @@ def main() -> None:
         "seed": args.seed,
         "validation_fraction": args.validation_fraction,
         "test_fraction": args.test_fraction,
+        "split_manifest": str(args.split_manifest) if args.split_manifest else None,
+        "calibration_images": len(calibration_y) if calibration_y is not None else len(val_y),
+        "calibration_split": "calibration" if calibration_y is not None else "validation",
         "forensic_mode": args.forensic_mode,
         "augmentation_repeats": args.augmentation_repeats,
         "augmentation_depth": args.augmentation_depth,

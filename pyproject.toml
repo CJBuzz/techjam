@@ -19,6 +19,9 @@ aigc-train = "aigc_detector.train:main"
 aigc-train-mixture = "aigc_detector.train_mixture:main"
 aigc-predict = "aigc_detector.predict:main"
 aigc-evaluate = "aigc_detector.evaluate:main"
+aigc-severity = "aigc_detector.severity:main"
+aigc-calibrate = "aigc_detector.calibrate:main"
+aigc-shortcut-audit = "aigc_detector.shortcut_audit:main"
 
 [tool.uv]
 package = true

@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import hashlib
 import random
+import csv
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -39,6 +40,22 @@ def load_labeled_paths(root: str | Path) -> list[tuple[Path, int]]:
     if {label for _, label in rows} != {0, 1}:
         raise ValueError("Both real (0) and AI-generated (1) images are required")
     return sorted(rows, key=lambda row: str(row[0]))
+
+
+def load_split_manifest(root: str | Path, manifest: str | Path) -> dict[str, list[tuple[Path, int]]]:
+    """Load persisted original-level splits created by the scale-data preparation script."""
+    root, manifest = Path(root), Path(manifest)
+    splits: dict[str, list[tuple[Path, int]]] = {}
+    with manifest.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            path = root / row["path"]
+            if not path.is_file():
+                raise FileNotFoundError(f"Manifest image does not exist: {path}")
+            splits.setdefault(row["split"], []).append((path, int(row["label"])))
+    required = {"train", "model_selection", "calibration", "test"}
+    if set(splits) != required:
+        raise ValueError(f"Manifest splits must be {sorted(required)}; got {sorted(splits)}")
+    return splits
 
 
 def stratified_split(
@@ -152,6 +169,80 @@ class RobustTransform:
         crop_w, crop_h = round(image.width * 0.8), round(image.height * 0.8)
         left, top = (image.width - crop_w) // 2, (image.height - crop_h) // 2
         return image.crop((left, top, left + crop_w, top + crop_h)).resize(image.size, Image.Resampling.BICUBIC)
+
+
+SEVERITY_SPECS: tuple[tuple[str, float], ...] = (
+    ("clean", 0.0),
+    *(("jpeg", float(value)) for value in (90, 70, 50, 30)),
+    *(("blur", value) for value in (0.5, 1.0, 2.0)),
+    *(("resize", value) for value in (0.5, 0.25)),
+    *(("noise", value) for value in (0.02, 0.05, 0.10)),
+    *(("color", value) for value in (0.10, 0.20)),
+    ("crop", 0.80),
+)
+
+
+def severity_key(operation: str, value: float) -> str:
+    """Stable, filesystem/JSON-friendly name for an exact challenge severity."""
+    if operation == "clean":
+        return "clean"
+    if operation == "jpeg":
+        return f"jpeg_q{int(value)}"
+    if operation in {"blur", "noise"}:
+        return f"{operation}_{value:g}"
+    if operation in {"resize", "crop"}:
+        return f"{operation}_{value:g}x"
+    return f"color_pm{round(value * 100):g}pct"
+
+
+class ExactSeverityTransform:
+    """Apply one exact challenge severity with path-keyed deterministic randomness."""
+
+    def __init__(self, operation: str, value: float, seed: int = 42, key: str = "") -> None:
+        if (operation, float(value)) not in SEVERITY_SPECS:
+            raise ValueError(f"Unknown severity: {(operation, value)!r}")
+        self.operation = operation
+        self.value = float(value)
+        digest = hashlib.sha256(f"{seed}\0{key}\0{operation}\0{value:g}".encode()).digest()
+        self.seed = int.from_bytes(digest[:8], "big")
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        image = image.convert("RGB")
+        if self.operation == "clean":
+            return image
+        if self.operation == "jpeg":
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=int(self.value))
+            buffer.seek(0)
+            with Image.open(buffer) as decoded:
+                return decoded.convert("RGB")
+        if self.operation == "blur":
+            return image.filter(ImageFilter.GaussianBlur(self.value))
+        if self.operation == "resize":
+            size = (
+                max(1, round(image.width * self.value)),
+                max(1, round(image.height * self.value)),
+            )
+            return image.resize(size, Image.Resampling.BILINEAR).resize(
+                image.size, Image.Resampling.BILINEAR
+            )
+        if self.operation == "noise":
+            array = np.asarray(image, dtype=np.float32) / 255.0
+            rng = np.random.default_rng(self.seed)
+            array = np.clip(array + rng.normal(0.0, self.value, array.shape), 0.0, 1.0)
+            return Image.fromarray((array * 255).astype(np.uint8), "RGB")
+        if self.operation == "color":
+            rng = random.Random(self.seed)
+            for enhancer in (ImageEnhance.Brightness, ImageEnhance.Contrast, ImageEnhance.Color):
+                direction = -1.0 if rng.getrandbits(1) else 1.0
+                image = enhancer(image).enhance(1.0 + direction * self.value)
+            return image
+        crop_w = max(1, round(image.width * self.value))
+        crop_h = max(1, round(image.height * self.value))
+        left, top = (image.width - crop_w) // 2, (image.height - crop_h) // 2
+        return image.crop((left, top, left + crop_w, top + crop_h)).resize(
+            image.size, Image.Resampling.BICUBIC
+        )
 
 
 BALANCED_TRANSFORM_GROUPS = (
