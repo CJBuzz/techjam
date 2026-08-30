@@ -1,3 +1,4 @@
+import csv
 import random
 import tempfile
 import unittest
@@ -12,14 +13,18 @@ from PIL import Image
 from aigc_detector.data import (
     ROBUSTNESS_CONDITIONS,
     DeterministicTransform,
+    ExactSeverityTransform,
     RobustTransform,
+    SEVERITY_SPECS,
     image_source,
     load_labeled_paths,
+    load_split_manifest,
+    severity_key,
     stratified_split,
     stratified_train_val_test_split,
 )
 from aigc_detector.evaluate import paired_generator_metrics, robustness_scorecard, write_condition_csv
-from aigc_detector.metrics import classification_metrics
+from aigc_detector.metrics import classification_metrics, expected_calibration_error, operational_thresholds
 from scripts.prepare_bfree_new_generators import parse_checksums, prepare_dataset
 from aigc_detector.model import (
     AdaptiveTriExpertHead,
@@ -79,6 +84,25 @@ class CoreTests(unittest.TestCase):
             transformed = DeterministicTransform(condition, 42, "/example/image.png", 0)(image)
             self.assertEqual(transformed.mode, "RGB")
             self.assertEqual(transformed.size, image.size)
+
+    def test_exact_severity_matrix_is_deterministic_and_shape_preserving(self) -> None:
+        image = Image.fromarray(np.arange(40 * 60 * 3, dtype=np.uint8).reshape(40, 60, 3), "RGB")
+        self.assertEqual(len(SEVERITY_SPECS), 16)
+        self.assertEqual(len({severity_key(*spec) for spec in SEVERITY_SPECS}), 16)
+        for operation, value in SEVERITY_SPECS:
+            transform = ExactSeverityTransform(operation, value, seed=42, key="example")
+            first, second = transform(image), transform(image)
+            self.assertEqual(first.mode, "RGB")
+            self.assertEqual(first.size, image.size)
+            self.assertTrue(np.array_equal(np.asarray(first), np.asarray(second)))
+
+    def test_calibration_metrics_and_thresholds(self) -> None:
+        labels = torch.tensor([0.0, 0.0, 1.0, 1.0])
+        probabilities = torch.tensor([0.1, 0.2, 0.8, 0.9])
+        self.assertLess(expected_calibration_error(labels, probabilities, bins=5), 0.2)
+        thresholds = operational_thresholds(labels, probabilities, recall_target=1.0, precision_target=1.0)
+        self.assertGreaterEqual(thresholds["high_recall"]["recall"], 1.0)
+        self.assertGreaterEqual(thresholds["high_precision"]["precision"], 1.0)
 
     def test_folder_loading_and_split_are_balanced(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -196,6 +220,22 @@ class CoreTests(unittest.TestCase):
             checksum = Path(tmp) / "checksum.txt"
             checksum.write_text("d41d8cd98f00b204e9800998ecf8427e  file.zip\n", encoding="utf-8")
             self.assertEqual(parse_checksums(checksum)["file.zip"], ("md5", "d41d8cd98f00b204e9800998ecf8427e"))
+
+    def test_load_split_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            rows = []
+            for index, split in enumerate(("train", "model_selection", "calibration", "test")):
+                path = root / f"{index}.png"
+                Image.new("RGB", (8, 8)).save(path)
+                rows.append({"path": path.name, "label": index % 2, "split": split})
+            manifest = root / "manifest.csv"
+            with manifest.open("w", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=("path", "label", "split"))
+                writer.writeheader()
+                writer.writerows(rows)
+            splits = load_split_manifest(root, manifest)
+            self.assertEqual(set(splits), {"train", "model_selection", "calibration", "test"})
 
 
 if __name__ == "__main__":

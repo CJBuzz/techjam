@@ -11,7 +11,12 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from .data import ROBUST_SELECTION_CONDITIONS, load_labeled_paths, stratified_train_val_test_split
+from .data import (
+    ROBUST_SELECTION_CONDITIONS,
+    load_labeled_paths,
+    load_split_manifest,
+    stratified_train_val_test_split,
+)
 from .features import extract_balanced_features, extract_condition_features, extract_features
 from .metrics import classification_metrics, fit_temperature, select_threshold
 from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, save_checkpoint
@@ -58,6 +63,7 @@ def merge_balanced_feature_sets(
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the frozen two-stream AIGC detector")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing real/ and ai/ folders")
+    parser.add_argument("--split-manifest", type=Path, default=None, help="Persisted duplicate-aware split manifest")
     parser.add_argument("--output", type=Path, default=Path("artifacts/hybrid_detector.pt"))
     parser.add_argument("--cache", type=Path, default=None, help="Optional feature cache (.pt)")
     parser.add_argument(
@@ -144,7 +150,10 @@ def _dataset_fingerprint(rows: list[tuple[Path, int]], root: Path) -> str:
     return digest.hexdigest()
 
 
-def _cache_manifest(args: argparse.Namespace, config: ModelConfig, rows: list[tuple[Path, int]]) -> dict:
+def build_cache_manifest(args: argparse.Namespace, config: ModelConfig, rows: list[tuple[Path, int]]) -> dict:
+    split_manifest_hash = None
+    if args.split_manifest:
+        split_manifest_hash = hashlib.sha256(args.split_manifest.read_bytes()).hexdigest()
     return {
         "schema_version": 2,
         "dataset_fingerprint": _dataset_fingerprint(rows, args.data_dir),
@@ -152,6 +161,7 @@ def _cache_manifest(args: argparse.Namespace, config: ModelConfig, rows: list[tu
         "validation_fraction": args.validation_fraction,
         "test_fraction": args.test_fraction,
         "seed": args.seed,
+        "split_manifest_sha256": split_manifest_hash,
         "augmentation_policy": args.augmentation_policy,
         "augmentation_repeats": max(2, args.augmentation_repeats)
         if args.augmentation_policy == "balanced" else max(1, args.augmentation_repeats),
@@ -168,9 +178,19 @@ def main() -> None:
     torch.manual_seed(args.seed)
     device = choose_device(args.device)
     rows = load_labeled_paths(args.data_dir)
-    train_rows, val_rows, test_rows = stratified_train_val_test_split(
-        rows, args.data_dir, args.validation_fraction, args.test_fraction, args.seed
-    )
+    calibration_rows: list[tuple[Path, int]] = []
+    if args.split_manifest:
+        manifest_splits = load_split_manifest(args.data_dir, args.split_manifest)
+        train_rows, val_rows, calibration_rows, test_rows = (
+            manifest_splits["train"],
+            manifest_splits["model_selection"],
+            manifest_splits["calibration"],
+            manifest_splits["test"],
+        )
+    else:
+        train_rows, val_rows, test_rows = stratified_train_val_test_split(
+            rows, args.data_dir, args.validation_fraction, args.test_fraction, args.seed
+        )
     if not 0.0 <= args.modality_dropout < 1.0:
         raise ValueError("--modality-dropout must be in [0, 1)")
     if not 0.0 <= args.fft_dropout < 1.0:
@@ -186,7 +206,7 @@ def main() -> None:
     if (args.consistency_weight or args.worst_group_weight) and args.augmentation_policy != "balanced":
         raise ValueError("Paired consistency and worst-group loss require --augmentation-policy balanced")
 
-    expected_manifest = _cache_manifest(args, config, rows)
+    expected_manifest = build_cache_manifest(args, config, rows)
     if args.cache and args.cache.exists():
         cached = torch.load(args.cache, map_location="cpu", weights_only=True)
         if cached.get("manifest") != expected_manifest:
@@ -196,6 +216,8 @@ def main() -> None:
             )
         train_x, train_y = cached["train_features"], cached["train_labels"]
         val_x, val_y = cached["val_features"], cached["val_labels"]
+        calibration_x = cached.get("calibration_features")
+        calibration_y = cached.get("calibration_labels")
         test_x, test_y = cached.get("test_features"), cached.get("test_labels")
         robust_val_x, robust_val_y = cached.get("robust_val_features"), cached.get("robust_val_labels")
         robust_val_conditions = cached.get("robust_val_conditions")
@@ -228,6 +250,11 @@ def main() -> None:
             robust_val_x, robust_val_y, _, robust_val_conditions = extract_condition_features(
                 val_rows, encoders, args.feature_batch_size, ROBUST_SELECTION_CONDITIONS, args.seed
             )
+        calibration_x = calibration_y = None
+        if calibration_rows:
+            calibration_x, calibration_y, _ = extract_features(
+                calibration_rows, encoders, args.feature_batch_size
+            )
         test_x = test_y = None
         if args.report_test_metrics:
             test_x, test_y, _ = extract_features(test_rows, encoders, args.feature_batch_size)
@@ -241,6 +268,11 @@ def main() -> None:
                     "val_labels": val_y,
                     "manifest": expected_manifest,
                     "augmentation_policy": args.augmentation_policy,
+                    **(
+                        {"calibration_features": calibration_x, "calibration_labels": calibration_y}
+                        if calibration_x is not None and calibration_y is not None
+                        else {}
+                    ),
                     **(
                         {
                             "robust_val_features": robust_val_x,
@@ -410,9 +442,16 @@ def main() -> None:
     head.to("cpu").eval()
     with torch.no_grad():
         clean_logits = head(val_x)
-        calibration_logits = clean_logits
-        calibration_labels = val_y
-        if robust_val_x is not None and robust_val_y is not None:
+        if calibration_x is not None and calibration_y is not None:
+            # A persisted four-way manifest keeps calibration independent from
+            # checkpoint selection. The dedicated calibration CLI can add exact
+            # transformed views later without touching model-selection data.
+            calibration_logits = head(calibration_x)
+            calibration_labels = calibration_y
+        else:
+            calibration_logits = clean_logits
+            calibration_labels = val_y
+        if calibration_x is None and robust_val_x is not None and robust_val_y is not None:
             calibration_logits = torch.cat((clean_logits, head(robust_val_x)))
             calibration_labels = torch.cat((val_y, robust_val_y))
     temperature = fit_temperature(calibration_logits, calibration_labels)
@@ -448,6 +487,9 @@ def main() -> None:
         "seed": args.seed,
         "validation_fraction": args.validation_fraction,
         "test_fraction": args.test_fraction,
+        "split_manifest": str(args.split_manifest) if args.split_manifest else None,
+        "calibration_images": len(calibration_y) if calibration_y is not None else len(val_y),
+        "calibration_split": "calibration" if calibration_y is not None else "validation",
         "forensic_mode": args.forensic_mode,
         "augmentation_repeats": args.augmentation_repeats,
         "augmentation_depth": args.augmentation_depth,

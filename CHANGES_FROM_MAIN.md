@@ -1,12 +1,21 @@
-# Changes from the default branch (`main`)
+# Integrated changes from `main` and Track 5 experiments
 
-> This repository does not have a `master` branch. Its default branch is `main`, so this report compares `main` at `f043567` with the `testing` branch.
+> This repository does not have a `master` branch. This report began as a comparison with the earlier `main` baseline at `f043567`; the current integration also includes the 100K/Kaggle scaling work from `main` at `bbf3667` and the later `track5-experiments` work.
 
 ## Summary
 
 The detector was changed from a basic frozen two-stream classifier into a robustness-first, multi-view AIGC detector tailored to TechJam Problem 5. The implementation now reproduces every official corruption severity, trains against balanced clean/transformed views, selects checkpoints using robust validation, supports an additional FFT forensic stream and an experimental three-expert ensemble, produces richer robustness/error reports, and runs natively on Apple Silicon through MPS.
 
-The code delta before this report consists of 647 insertions and 89 deletions across 10 tracked files.
+The result combines the robustness-first detector, controlled Track 5 experiments, cross-generator evaluation, and the duplicate-aware large-scale data pipeline in one tested branch.
+
+## Latest branch integration
+
+- Kept the Track 5 exact corruption names, balanced augmentation, robust checkpoint selection, TTA, streamed diverse-data caches, and controlled phase-two experiments.
+- Added `main`'s persisted duplicate-aware train/model-selection/calibration/test manifests, 100K preparation and Kaggle handoff tools, exact-severity reports, calibration reports, ECE, operational thresholds, and shortcut/leakage audit.
+- Unified both severity implementations behind one canonical 16-condition matrix so training and analysis cannot apply subtly different color or corruption definitions.
+- Kept calibration independent from model-selection data when a four-way split manifest is supplied, while retaining the existing robust-validation calibration fallback for legacy three-way runs.
+- Extended the new analysis commands to Apple MPS and made severity/audit decisions use the checkpoint's calibrated threshold.
+- Verified the merged result with all 75 unit tests, Python compilation, shell-script syntax checks, and Git whitespace checks.
 
 ## Robustness improvements
 

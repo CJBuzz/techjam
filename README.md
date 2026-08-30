@@ -1,6 +1,6 @@
 # Robust AIGC Detector
 
-A lightweight multi-view detector for TikTok TechJam Track 5. The strongest version fuses a frozen CLIP ViT-B/32 semantic embedding with frozen EfficientNet-B0 features from both a reproducible Laplacian high-pass image and a centered log-magnitude FFT. Only a small MLP is trained. A held-out validation split is used for early stopping, candidate selection, and post-hoc temperature calibration; the test split is reserved for one final evaluation.
+A lightweight multi-view detector for TikTok TechJam Track 5. The strongest version fuses a frozen CLIP ViT-B/32 semantic embedding with frozen EfficientNet-B0 features from both a reproducible Laplacian high-pass image and a centered log-magnitude FFT. Only a small MLP is trained. Disjoint model-selection and calibration splits are used for early stopping and post-hoc temperature calibration; the test split is reserved for one final evaluation.
 
 The model stays far below the 2-billion-parameter limit and feature caching makes the initial frozen-encoder stage practical on modest hardware.
 
@@ -250,6 +250,142 @@ evaluates every labeled image without recreating an internal train/validation/te
 split.
 
 ## Kaggle recommendations
+
+### Audited 100K GPU handoff
+
+The reproducible route is to upload the already prepared `data/mixed_100k` directory once as a
+private Kaggle Dataset. This preserves the exact duplicate groups and the train/model-selection/
+calibration/reserved-test assignments instead of generating a different random sample in the
+notebook.
+
+On this machine, authenticate with a token from Kaggle's API settings, validate the corpus, and
+upload it (replace the handle with your Kaggle username and a new dataset slug):
+
+```bash
+uv run --with kagglehub python scripts/kaggle_dataset.py upload \
+  --handle YOUR_USERNAME/aigc-mixed-100k \
+  --data-dir data/mixed_100k \
+  --dry-run
+uv run --with kagglehub python scripts/kaggle_dataset.py upload \
+  --handle YOUR_USERNAME/aigc-mixed-100k \
+  --data-dir data/mixed_100k \
+  --login
+```
+
+`--with kagglehub` installs KaggleHub only for that `uv run`; it does not add it to this project's
+dependencies. `--login` is intentionally part of the upload command: KaggleHub's interactive login
+is process-local, so logging in with one `uv run` and uploading with another loses the credential.
+The uploader calls `whoami()` and verifies that `YOUR_USERNAME` owns the requested handle before it
+starts transferring files. As a persistent alternative, place a generated API token in
+`~/.kaggle/access_token` or set `KAGGLE_API_TOKEN`, then omit `--login`.
+
+Upload the repository itself as a second, small private Kaggle Dataset. The helper excludes data,
+artifacts, model caches, `.venv`, Git history, logs, and common credential files:
+
+```bash
+uv run --with kagglehub python scripts/kaggle_repo.py \
+  --handle YOUR_USERNAME/techjam-source \
+  --dry-run
+uv run --with kagglehub python scripts/kaggle_repo.py \
+  --handle YOUR_USERNAME/techjam-source \
+  --login
+```
+
+Verify in Kaggle that **both** Datasets are Private. In a new Kaggle notebook, select a GPU, turn
+Internet on for the initial model download, and add `techjam-source` and `aigc-mixed-100k` through
+the notebook's **Add Input** panel. Kaggle inputs are read-only, so copy only the small source
+Dataset to the writable working directory:
+
+```bash
+find /kaggle/input -maxdepth 4 -type f \
+  \( -name pyproject.toml -o -name split_manifest.csv \) -print
+
+SOURCE_FILE=$(find /kaggle/input -maxdepth 4 -type f -name pyproject.toml -print -quit)
+SOURCE_ROOT=$(dirname "$SOURCE_FILE")
+mkdir -p /kaggle/working/techjam
+cp -a "$SOURCE_ROOT"/. /kaggle/working/techjam/
+cd /kaggle/working/techjam
+python -m pip install -q -e . --no-deps
+
+DATA_FILE=$(find /kaggle/input -maxdepth 4 -type f -name split_manifest.csv -print -quit)
+DATA_ROOT=$(dirname "$DATA_FILE")
+python scripts/kaggle_dataset.py validate --data-dir "$DATA_ROOT"
+```
+
+The Kaggle image already includes CUDA-enabled PyTorch and the common scientific dependencies.
+Using `pip --no-deps` here is intentional: this repository's local `uv` configuration pins the CPU
+PyTorch index, so running `uv sync` in Kaggle could replace its CUDA build. If an import is missing,
+install only that package rather than reinstalling `torch` or `torchvision`.
+
+Kaggle P100 sessions may currently start with a CUDA 12.8 PyTorch wheel that omits Pascal `sm_60`
+kernels. If `torch.cuda.get_arch_list()` does not include `sm_60`, install the official CUDA 12.6
+build before importing the detector, then verify a real CUDA operation:
+
+```bash
+python -m pip install -q --no-cache-dir --force-reinstall \
+  torch==2.10.0 torchvision==0.25.0 \
+  --index-url https://download.pytorch.org/whl/cu126
+python -c 'import torch; x=torch.ones(1, device="cuda"); print(torch.__version__, torch.cuda.get_arch_list(), x)'
+```
+
+The last line printed is `DATA_ROOT=...`. Use that exact path without copying the images into
+`/kaggle/working`, for example:
+
+```bash
+bash scripts/kaggle_run_100k.sh \
+  "$DATA_ROOT" \
+  /kaggle/working/aigc_100k
+```
+
+If KaggleHub returns a versioned cache path instead of `/kaggle/input/aigc-mixed-100k`, pass the
+printed `DATA_ROOT` value. `FEATURE_BATCH_SIZE=16` can be used if 32 exhausts GPU memory. The runner
+extracts three balanced training views plus clean model-selection and calibration features, trains
+the Laplacian initializer, then trains the paired-consistency Laplacian+FFT head. It deliberately
+does not extract or score the reserved test split. Save a notebook version when finished so the
+feature caches and checkpoints under `/kaggle/working/aigc_100k` become reusable notebook output.
+
+After the baseline runner completes, run the prepared analyses sequentially on the same GPU:
+
+```bash
+bash scripts/kaggle_analyze_100k.sh \
+  "$DATA_ROOT" \
+  /kaggle/working/aigc_100k
+```
+
+This performs three model-selection-safe tasks without reading reserved test images:
+
+- fits both clean-only and deterministic mixed-condition temperatures on the separate 4,987-image
+  calibration split, preselects mixed calibration, and records high-recall/high-precision
+  thresholds;
+- verifies exact hashes and near-duplicate groups remain split-atomic, trains linear source probes
+  for CLIP/Laplacian/FFT/fused features, reports detector metrics by source and native resolution,
+  and records representative false positives/negatives with nearest-training-image dHash distance;
+- evaluates all 16 explicit challenge cells: clean, four JPEG qualities, three blur sigmas, two
+  resize scales, three noise sigmas, two color magnitudes, and the 80% center crop.
+
+The severity output is saved after every cell and `--resume` skips completed cells, so a Kaggle
+session can safely be continued. The full severity matrix processes 159,600 model-selection views;
+the mixed calibration pass adds 4,987 transformed views. This is inference-only but is still a
+substantial GPU job. The shortcut audit reuses the baseline feature cache and is comparatively
+cheap. Preserve these additional output artifacts:
+
+```text
+mixed_100k_balanced_consistency_w01_mixed_calibrated.pt
+mixed_100k_calibration.json
+mixed_100k_shortcut_audit.json
+mixed_100k_model_selection_severity.json
+```
+
+Do not invoke `aigc-severity --split test --allow-test` until preprocessing, calibration, thresholds,
+and every candidate comparison have been locked.
+
+WildFake is not substituted automatically. Its official release is on ModelScope, not as a
+verified first-party Kaggle Dataset, and it is distributed in multi-gigabyte generator archives.
+The smallest useful multi-generator experiment also needs a new generator-held-out manifest;
+mixing an unofficial mirror into this fixed split would weaken both licensing and leakage checks.
+Use the audited CIFAKE+SID 100K run first. Treat an official WildFake import as a separate
+experiment, preserve its official hierarchy CSVs, and never use the challenge's demonstration-only
+COCO/DALL-E subset for training.
 
 - Enable a GPU. The encoders automatically use CUDA; only the fusion head is optimized.
 - Use generator/source-separated training and validation data. Never split transformed copies of one original across splits.

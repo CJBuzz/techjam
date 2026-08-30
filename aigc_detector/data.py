@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import hashlib
 import random
+import csv
 from pathlib import Path
 from typing import Callable, Iterable
 
@@ -45,6 +46,22 @@ def image_source(path: str | Path, root: str | Path) -> str:
     """Return the source folder in ``root/{real,ai}/{source}/...`` layouts."""
     parts = Path(path).resolve().relative_to(Path(root).resolve()).parts
     return parts[1].lower() if len(parts) >= 3 else "default"
+
+
+def load_split_manifest(root: str | Path, manifest: str | Path) -> dict[str, list[tuple[Path, int]]]:
+    """Load persisted original-level splits created by the scale-data preparation script."""
+    root, manifest = Path(root), Path(manifest)
+    splits: dict[str, list[tuple[Path, int]]] = {}
+    with manifest.open(newline="", encoding="utf-8") as handle:
+        for row in csv.DictReader(handle):
+            path = root / row["path"]
+            if not path.is_file():
+                raise FileNotFoundError(f"Manifest image does not exist: {path}")
+            splits.setdefault(row["split"], []).append((path, int(row["label"])))
+    required = {"train", "model_selection", "calibration", "test"}
+    if set(splits) != required:
+        raise ValueError(f"Manifest splits must be {sorted(required)}; got {sorted(splits)}")
+    return splits
 
 
 def stratified_split(
@@ -187,6 +204,54 @@ ROBUSTNESS_CONDITIONS = tuple(TRANSFORM_CONDITIONS)
 ROBUST_SELECTION_CONDITIONS = (
     "jpeg_q30", "blur_s2.0", "resize_x0.25", "noise_s0.10", "color_0.8", "crop_0.8",
 )
+
+# Compatibility API used by the scale calibration and severity-reporting tools.
+# These specs deliberately resolve to the same canonical conditions used by the
+# Track 5 robustness evaluator, so training and reporting cannot silently drift.
+SEVERITY_SPECS: tuple[tuple[str, float], ...] = (
+    ("clean", 0.0),
+    *(("jpeg", float(value)) for value in (90, 70, 50, 30)),
+    *(("blur", value) for value in (0.5, 1.0, 2.0)),
+    *(("resize", value) for value in (0.5, 0.25)),
+    *(("noise", value) for value in (0.02, 0.05, 0.10)),
+    *(("color", value) for value in (0.8, 1.2)),
+    ("crop", 0.80),
+)
+
+
+def severity_key(operation: str, value: float) -> str:
+    """Stable, filesystem/JSON-friendly name for an exact challenge severity."""
+    if operation == "clean":
+        return "clean"
+    if operation == "jpeg":
+        return f"jpeg_q{int(value)}"
+    if operation == "blur":
+        return f"blur_s{value:.1f}"
+    if operation == "resize":
+        return f"resize_x{value:g}"
+    if operation == "noise":
+        return f"noise_s{value:.2f}"
+    if operation == "color":
+        return f"color_{value:g}"
+    if operation == "crop":
+        return f"crop_{value:g}"
+    raise ValueError(f"Unknown severity operation: {operation!r}")
+
+
+class ExactSeverityTransform:
+    """Apply one canonical challenge severity deterministically for a path."""
+
+    def __init__(self, operation: str, value: float, seed: int = 42, key: str = "") -> None:
+        if (operation, float(value)) not in SEVERITY_SPECS:
+            raise ValueError(f"Unknown severity: {(operation, value)!r}")
+        self.operation = operation
+        self.value = float(value)
+        self.condition = severity_key(operation, self.value)
+        self.seed = seed
+        self.key = key
+
+    def __call__(self, image: Image.Image) -> Image.Image:
+        return DeterministicTransform(self.condition, self.seed, self.key, 0)(image)
 
 TTA_MODES = {
     "none": ("clean",),
