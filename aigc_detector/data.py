@@ -188,6 +188,11 @@ ROBUST_SELECTION_CONDITIONS = (
     "jpeg_q30", "blur_s2.0", "resize_x0.25", "noise_s0.10", "color_0.8", "crop_0.8",
 )
 
+TTA_MODES = {
+    "none": ("clean",),
+    "mild3": ("clean", "jpeg_q90", "resize_x0.5"),
+}
+
 # Exact challenge severities prevent a random cache from under-sampling the hard cases.
 # A few realistic chains retain the redistribution scenarios from the original policy.
 BALANCED_TRANSFORM_GROUPS = tuple(TRANSFORM_CONDITIONS)[1:] + (
@@ -233,6 +238,26 @@ class DeterministicTransform:
         finally:
             random.setstate(python_state)
             np.random.set_state(numpy_state)
+
+
+def test_time_views(image: Image.Image, mode: str, seed: int, identity: str) -> list[Image.Image]:
+    """Create deterministic views after an official condition has already been applied."""
+    if mode not in TTA_MODES:
+        raise ValueError(f"Unknown TTA mode {mode!r}")
+    views = []
+    for view_index, condition in enumerate(TTA_MODES[mode]):
+        transform = RobustTransform("clean") if condition == "clean" else DeterministicTransform(
+            condition, seed, identity, view_index
+        )
+        views.append(transform(image.copy()))
+    return views
+
+
+def average_view_logits(logits: torch.Tensor) -> torch.Tensor:
+    """Average pre-sigmoid logits across a non-empty final view dimension."""
+    if logits.ndim < 2 or logits.shape[-1] < 1:
+        raise ValueError("Expected logits with a non-empty final TTA-view dimension")
+    return logits.mean(dim=-1)
 
 
 class ImagePathDataset(Dataset):

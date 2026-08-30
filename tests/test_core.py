@@ -18,7 +18,8 @@ from aigc_detector.data import (
     stratified_split,
     stratified_train_val_test_split,
 )
-from aigc_detector.evaluate import paired_generator_metrics
+from aigc_detector.evaluate import paired_generator_metrics, robustness_scorecard, write_condition_csv
+from aigc_detector.metrics import classification_metrics
 from scripts.prepare_bfree_new_generators import parse_checksums, prepare_dataset
 from aigc_detector.model import (
     AdaptiveTriExpertHead,
@@ -31,6 +32,22 @@ from aigc_detector.model import (
 
 
 class CoreTests(unittest.TestCase):
+    def test_e0_scorecard_metrics_and_csv(self) -> None:
+        labels = torch.tensor([0, 0, 1, 1], dtype=torch.float32)
+        clean = classification_metrics(labels, torch.tensor([0.1, 0.2, 0.8, 0.9]), 0.5)
+        transformed = classification_metrics(labels, torch.tensor([0.1, 0.8, 0.2, 0.9]), 0.5)
+        results = {"clean": {"overall": clean}, "jpeg_q30": {"overall": transformed}}
+        summary = robustness_scorecard(results)
+        self.assertEqual(clean["sample_count"], 4)
+        self.assertEqual(summary["clean_balanced_accuracy"], 1.0)
+        self.assertEqual(summary["worst_transformed_condition"], "jpeg_q30")
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp) / "conditions.csv"
+            write_condition_csv(output, results)
+            lines = output.read_text(encoding="utf-8").splitlines()
+            self.assertEqual(len(lines), 3)
+            self.assertIn("false_positive_rate", lines[0])
+
     def test_every_robust_transform_preserves_rgb_shape(self) -> None:
         image = Image.fromarray(np.full((40, 60, 3), 127, dtype=np.uint8), "RGB")
         random.seed(1)

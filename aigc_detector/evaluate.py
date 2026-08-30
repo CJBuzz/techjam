@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import random
 from pathlib import Path
@@ -11,14 +12,57 @@ import torch
 from .data import (
     ROBUSTNESS_CONDITIONS,
     ROBUST_SELECTION_CONDITIONS,
+    TTA_MODES,
+    average_view_logits,
     image_source,
     load_labeled_paths,
     stratified_train_val_test_split,
 )
-from .features import extract_condition_features
+from .features import extract_condition_tta_features
 from .metrics import classification_metrics
 from .model import AdaptiveTriExpertHead, ExpertMixtureHead, FrozenEncoders, load_checkpoint
 from .train import choose_device
+
+
+SCORECARD_FIELDS = (
+    "roc_auc",
+    "balanced_accuracy",
+    "accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "false_positive_rate",
+    "false_negative_rate",
+    "sample_count",
+)
+
+
+def robustness_scorecard(condition_results: dict[str, dict[str, object]]) -> dict[str, object]:
+    """Aggregate exact-condition metrics without selecting or tuning on test labels."""
+    clean = condition_results["clean"]["overall"]
+    transformed = {
+        name: values["overall"] for name, values in condition_results.items() if name != "clean"
+    }
+    balanced = {name: float(metrics["balanced_accuracy"]) for name, metrics in transformed.items()}
+    aucs = {name: float(metrics["roc_auc"]) for name, metrics in transformed.items()}
+    return {
+        "clean_balanced_accuracy": float(clean["balanced_accuracy"]),
+        "mean_transformed_balanced_accuracy": float(np.mean(list(balanced.values()))),
+        "worst_transformed_balanced_accuracy": float(min(balanced.values())),
+        "worst_transformed_condition": min(balanced, key=balanced.get),
+        "mean_transformed_roc_auc": float(np.mean(list(aucs.values()))),
+        "worst_transformed_roc_auc": float(min(aucs.values())),
+    }
+
+
+def write_condition_csv(path: Path, condition_results: dict[str, dict[str, object]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=("condition", *SCORECARD_FIELDS))
+        writer.writeheader()
+        for condition, values in condition_results.items():
+            metrics = values["overall"]
+            writer.writerow({"condition": condition, **{field: metrics[field] for field in SCORECARD_FIELDS}})
 
 
 def paired_generator_metrics(
@@ -96,6 +140,12 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
     parser.add_argument("--output", type=Path, default=Path("artifacts/robustness.json"))
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=None,
+        help="Write the primary detailed_metrics.json and condition_metrics.csv scorecard here",
+    )
     parser.add_argument("--validation-fraction", type=float, default=0.15)
     parser.add_argument("--test-fraction", type=float, default=0.15)
     parser.add_argument(
@@ -109,6 +159,14 @@ def main() -> None:
         "--profile", choices=("full", "worst"), default="full",
         help="Full scores every official severity; worst is a faster hardest-severity check",
     )
+    parser.add_argument(
+        "--tta", choices=tuple(TTA_MODES), default="none",
+        help="Optional deterministic test-time logit averaging; disabled by default",
+    )
+    parser.add_argument(
+        "--response-model", type=Path, default=None,
+        help="Optional E3 perturbation-response head evaluated through the same E0 scorecard",
+    )
     parser.add_argument("--error-analysis-output", type=Path, default=None)
     parser.add_argument("--top-errors", type=int, default=12)
     parser.add_argument(
@@ -121,6 +179,8 @@ def main() -> None:
         ),
     )
     args = parser.parse_args()
+    if args.response_model and args.tta != "none":
+        raise ValueError("E3 response evaluation and E2 TTA are separate experiments")
     if args.protocol == "paired-generators" and args.split != "all":
         raise ValueError("--protocol paired-generators requires --split all")
     random.seed(args.seed)
@@ -132,6 +192,21 @@ def main() -> None:
     for checkpoint_path in checkpoint_paths:
         head, config, temperature, checkpoint_metadata = load_checkpoint(checkpoint_path, device)
         models.append((str(checkpoint_path), head, config, temperature, checkpoint_metadata))
+    response_head = response_temperature = response_threshold = response_metadata = None
+    if args.response_model:
+        if len(models) != 1:
+            raise ValueError("--response-model requires exactly one base checkpoint")
+        from .response import load_response_checkpoint
+
+        response_head, response_temperature, response_threshold, response_metadata = load_response_checkpoint(
+            args.response_model, device
+        )
+        expected_base = Path(response_metadata["base_checkpoint"]).resolve()
+        actual_base = Path(models[0][0]).resolve()
+        if actual_base != expected_base:
+            raise ValueError(
+                f"E3 response model was extracted from {expected_base}, not {actual_base}"
+            )
     reference_config = models[0][2]
     encoder_fields = ("clip_model", "clip_dim", "forensic_dim", "forensic_mode")
     reference_signature = tuple(getattr(reference_config, field) for field in encoder_fields)
@@ -160,6 +235,8 @@ def main() -> None:
         "seed": args.seed,
         "transform_strengths": "every official challenge severity is evaluated deterministically",
         "protocol": args.protocol,
+        "tta": args.tta,
+        "response_model": str(args.response_model) if args.response_model else None,
         "external_threshold_policy": (
             "checkpoint calibration and threshold are frozen; external labels are used only for scoring"
             if args.protocol == "paired-generators" else None
@@ -170,15 +247,35 @@ def main() -> None:
     conditions = ROBUSTNESS_CONDITIONS if args.profile == "full" else ("clean", *ROBUST_SELECTION_CONDITIONS)
     metadata["conditions"] = list(conditions)
     for name in conditions:
-        features, labels, paths, _ = extract_condition_features(
-            rows, encoders, args.batch_size, (name,), args.seed
-        )
+        if response_head is not None:
+            from .response import extract_response_features
+
+            base_head, base_config, base_temperature = models[0][1], models[0][2], models[0][3]
+            features, labels, paths = extract_response_features(
+                rows, [name] * len(rows), encoders, base_head, base_temperature,
+                base_config.clip_dim, base_config.clip_dim + base_config.forensic_dim,
+                args.batch_size, args.seed, device,
+            )
+        else:
+            features, labels, paths = extract_condition_tta_features(
+                rows, encoders, args.batch_size, name, args.seed, args.tta
+            )
         sources = [image_source(path, args.data_dir) for path in paths]
         for checkpoint_path, head, model_config, temperature, checkpoint_metadata in models:
-            model_features = features if model_config.quality_dim else features[:, : model_config.clip_dim + model_config.forensic_dim]
-            threshold = float(checkpoint_metadata.get("threshold", 0.5))
-            with torch.no_grad():
-                probabilities = torch.sigmoid(head(model_features.to(device)) / temperature).cpu()
+            if response_head is not None:
+                threshold = response_threshold
+                with torch.no_grad():
+                    probabilities = torch.sigmoid(response_head(features.to(device)) / response_temperature).cpu()
+                model_features = feature_rows = None
+            else:
+                model_features = features if model_config.quality_dim else features[
+                    ..., : model_config.clip_dim + model_config.forensic_dim
+                ]
+                threshold = float(checkpoint_metadata.get("threshold", 0.5))
+                with torch.no_grad():
+                    feature_rows = model_features.flatten(0, 1).to(device)
+                    view_logits = head(feature_rows).view(model_features.shape[:2])
+                    probabilities = torch.sigmoid(average_view_logits(view_logits) / temperature).cpu()
             condition_result: dict[str, object] = {
                 "overall": classification_metrics(labels, probabilities, threshold)
             }
@@ -207,8 +304,13 @@ def main() -> None:
                         "pred": float(probabilities[index]),
                         "error_type": "false_negative" if bool(truth) else "false_positive",
                     })
-            if isinstance(head, (ExpertMixtureHead, AdaptiveTriExpertHead)):
-                with torch.no_grad(): gate = head.gate_weights(model_features.to(device)).cpu()
+            if response_head is None and isinstance(head, (ExpertMixtureHead, AdaptiveTriExpertHead)):
+                with torch.no_grad():
+                    gate = head.gate_weights(feature_rows).view(
+                        model_features.shape[0], model_features.shape[1], -1
+                    ).mean(1).cpu()
+                    if gate.shape[1] == 1:
+                        gate = gate[:, 0]
                 gate_means = gate.mean(0)
                 model_results[checkpoint_path][name]["expert_gate"] = {
                     "overall_mean": gate_means.tolist() if gate_means.ndim else float(gate_means),
@@ -248,6 +350,10 @@ def main() -> None:
                 "worst_condition": min(transformed, key=transformed.get),
                 "mean_drop_from_clean": float(clean_accuracy - np.mean(list(transformed.values()))),
             }
+        exact_condition_results = {
+            condition: model_results[checkpoint_path][condition] for condition in conditions
+        }
+        model_results[checkpoint_path]["_scorecard"] = robustness_scorecard(exact_condition_results)
         ranked = sorted(
             error_records[checkpoint_path],
             key=lambda item: item["pred"] if item["error_type"] == "false_positive" else 1 - item["pred"],
@@ -261,8 +367,14 @@ def main() -> None:
         }
     else:
         results = {"_metadata": metadata, "checkpoints": model_results}
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+    output_path = args.output_dir / "detailed_metrics.json" if args.output_dir else args.output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
+    if args.output_dir:
+        if len(models) != 1:
+            raise ValueError("--output-dir compact scorecard requires exactly one checkpoint")
+        condition_results = {condition: model_results[models[0][0]][condition] for condition in conditions}
+        write_condition_csv(args.output_dir / "condition_metrics.csv", condition_results)
     if args.error_analysis_output:
         args.error_analysis_output.parent.mkdir(parents=True, exist_ok=True)
         errors = error_records[models[0][0]] if len(models) == 1 else error_records

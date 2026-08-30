@@ -17,11 +17,53 @@ from .metrics import classification_metrics, fit_temperature, select_threshold
 from .model import FrozenEncoders, FusionHead, ModelConfig, load_checkpoint, save_checkpoint
 
 
+def merge_balanced_feature_sets(
+    local_x: torch.Tensor,
+    local_y: torch.Tensor,
+    local_groups: list[str],
+    local_originals: int,
+    diverse_x: torch.Tensor,
+    diverse_y: torch.Tensor,
+    diverse_groups: list[str],
+    diverse_originals: int,
+) -> tuple[torch.Tensor, torch.Tensor, list[str], torch.Tensor, int]:
+    """Merge paired local and streamed features while preserving repeat-major pairing."""
+    local_repeats = len(local_y) // local_originals
+    diverse_repeats = len(diverse_y) // diverse_originals
+    if local_repeats != diverse_repeats:
+        raise ValueError(
+            f"Local cache has {local_repeats} paired views, diverse cache has {diverse_repeats}"
+        )
+    merged_x = torch.cat(
+        (local_x.view(local_repeats, local_originals, -1),
+         diverse_x.view(local_repeats, diverse_originals, -1)), dim=1,
+    ).flatten(0, 1)
+    merged_y = torch.cat(
+        (local_y.view(local_repeats, local_originals),
+         diverse_y.view(local_repeats, diverse_originals)), dim=1,
+    ).flatten()
+    merged_groups = [
+        group
+        for repeat in range(local_repeats)
+        for group in (
+            local_groups[repeat * local_originals : (repeat + 1) * local_originals]
+            + diverse_groups[repeat * diverse_originals : (repeat + 1) * diverse_originals]
+        )
+    ]
+    total_originals = local_originals + diverse_originals
+    original_indices = torch.arange(total_originals).repeat(local_repeats)
+    return merged_x, merged_y, merged_groups, original_indices, total_originals
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the frozen two-stream AIGC detector")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing real/ and ai/ folders")
     parser.add_argument("--output", type=Path, default=Path("artifacts/hybrid_detector.pt"))
     parser.add_argument("--cache", type=Path, default=None, help="Optional feature cache (.pt)")
+    parser.add_argument(
+        "--diverse-cache", type=Path, default=None,
+        help="Optional streamed CommunityForensics feature-cache directory added to local training only",
+    )
     parser.add_argument("--validation-fraction", type=float, default=0.15)
     parser.add_argument("--test-fraction", type=float, default=0.15)
     parser.add_argument(
@@ -63,6 +105,12 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         default=None,
         help="Initialize a laplacian_fft head from a compatible Laplacian checkpoint with zero FFT weights",
+    )
+    parser.add_argument(
+        "--initialize-from-checkpoint",
+        type=Path,
+        default=None,
+        help="Initialize the head from a checkpoint with an exactly matching model configuration",
     )
     parser.add_argument("--feature-batch-size", type=int, default=8)
     parser.add_argument("--head-batch-size", type=int, default=32)
@@ -216,7 +264,37 @@ def main() -> None:
             print(f"Saved feature cache: {args.cache}")
         del encoders
 
+    training_original_count = len(train_rows)
+    diverse_manifest = None
+    if args.diverse_cache:
+        if args.augmentation_policy != "balanced":
+            raise ValueError("--diverse-cache requires --augmentation-policy balanced")
+        if train_groups is None or train_original_indices is None:
+            raise ValueError("Local balanced cache is missing group/pair metadata")
+        from .streaming_cache import load_stream_feature_cache
+
+        diverse_x, diverse_y, diverse_groups, _, diverse_originals, diverse_manifest = load_stream_feature_cache(
+            args.diverse_cache, asdict(config)
+        )
+        train_x, train_y, train_groups, train_original_indices, training_original_count = (
+            merge_balanced_feature_sets(
+                train_x, train_y, train_groups, len(train_rows),
+                diverse_x, diverse_y, diverse_groups, diverse_originals,
+            )
+        )
+        print(f"Added {diverse_originals} streamed originals from: {args.diverse_cache}")
+
     head = FusionHead(config).to(device)
+    if args.initialize_from_checkpoint and args.initialize_from_laplacian:
+        raise ValueError("Choose only one checkpoint initialization mode")
+    if args.initialize_from_checkpoint:
+        source_head, source_config, _, _ = load_checkpoint(
+            args.initialize_from_checkpoint, torch.device("cpu")
+        )
+        if asdict(source_config) != asdict(config):
+            raise ValueError("Initialization checkpoint model configuration does not match E1")
+        head.load_state_dict(source_head.state_dict())
+        print(f"Initialized head from: {args.initialize_from_checkpoint}")
     if args.initialize_from_laplacian:
         if args.forensic_mode != "laplacian_fft":
             raise ValueError("--initialize-from-laplacian requires --forensic-mode laplacian_fft")
@@ -238,10 +316,10 @@ def main() -> None:
     if args.augmentation_policy == "balanced":
         if train_groups is None or train_original_indices is None:
             raise ValueError("Balanced feature cache is missing group/pair metadata")
-        repeats = len(train_y) // len(train_rows)
-        if repeats * len(train_rows) != len(train_y):
+        repeats = len(train_y) // training_original_count
+        if repeats * training_original_count != len(train_y):
             raise ValueError("Balanced feature rows must contain complete repeats of every original")
-        original_loader = DataLoader(torch.arange(len(train_rows)), batch_size=args.head_batch_size, shuffle=True)
+        original_loader = DataLoader(torch.arange(training_original_count), batch_size=args.head_batch_size, shuffle=True)
         group_names = sorted(set(train_groups))
     else:
         loader = DataLoader(TensorDataset(train_x, train_y), batch_size=args.head_batch_size, shuffle=True)
@@ -256,7 +334,9 @@ def main() -> None:
         for batch in batches:
             if args.augmentation_policy == "balanced":
                 original_batch = batch
-                feature_indices = torch.cat([original_batch + repeat * len(train_rows) for repeat in range(repeats)])
+                feature_indices = torch.cat([
+                    original_batch + repeat * training_original_count for repeat in range(repeats)
+                ])
                 features, labels = train_x[feature_indices], train_y[feature_indices]
                 batch_groups = [train_groups[index] for index in feature_indices.tolist()]
             else:
@@ -359,6 +439,9 @@ def main() -> None:
             test_metrics = classification_metrics(test_y, torch.sigmoid(head(test_x) / temperature), threshold)
     metadata = {
         "train_images": len(train_rows),
+        "diverse_train_images": training_original_count - len(train_rows),
+        "diverse_cache": str(args.diverse_cache) if args.diverse_cache else None,
+        "diverse_cache_manifest": diverse_manifest,
         "validation_images": len(val_rows),
         "test_images": len(test_rows),
         "train_feature_rows": len(train_y),
@@ -378,6 +461,8 @@ def main() -> None:
         "threshold_objective": args.threshold_objective,
         "modality_dropout": args.modality_dropout,
         "fft_dropout": args.fft_dropout,
+        "initialized_from_checkpoint": str(args.initialize_from_checkpoint)
+        if args.initialize_from_checkpoint else None,
         "initialized_from_laplacian": str(args.initialize_from_laplacian) if args.initialize_from_laplacian else None,
         "validation_metrics": metrics,
         **({"test_metrics": test_metrics} if test_metrics is not None else {}),

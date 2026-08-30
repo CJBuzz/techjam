@@ -7,7 +7,14 @@ from PIL import Image
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from .data import BALANCED_TRANSFORM_GROUPS, DeterministicTransform, ImagePathDataset, RobustTransform, pil_collate
+from .data import (
+    BALANCED_TRANSFORM_GROUPS,
+    DeterministicTransform,
+    ImagePathDataset,
+    RobustTransform,
+    pil_collate,
+    test_time_views,
+)
 from .model import FrozenEncoders
 from .model import image_quality_statistics
 
@@ -69,6 +76,34 @@ def extract_condition_features(
             all_features.append(encoders(images))
             all_labels.append(torch.tensor(labels, dtype=torch.float32))
     return torch.cat(all_features), torch.cat(all_labels), all_paths, all_conditions
+
+
+def extract_condition_tta_features(
+    rows: list[tuple[Path, int]],
+    encoders: FrozenEncoders,
+    batch_size: int,
+    condition: str,
+    seed: int,
+    tta: str,
+) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Apply one official corruption, then return per-image TTA feature views."""
+    feature_batches, all_labels, all_paths = [], [], []
+    for start in tqdm(range(0, len(rows), batch_size), desc=f"condition {condition} tta={tta}"):
+        images: list[Image.Image] = []
+        labels: list[int] = []
+        batch_rows = rows[start : start + batch_size]
+        for path, label in batch_rows:
+            official_transform = DeterministicTransform(condition, seed, str(path), 0)
+            with Image.open(path) as source:
+                official_image = official_transform(source.convert("RGB"))
+            images.extend(test_time_views(official_image, tta, seed, f"{path}:{condition}"))
+            labels.append(label)
+            all_paths.append(str(path))
+        encoded = encoders(images)
+        view_count = len(images) // len(batch_rows)
+        feature_batches.append(encoded.view(len(batch_rows), view_count, -1))
+        all_labels.append(torch.tensor(labels, dtype=torch.float32))
+    return torch.cat(feature_batches), torch.cat(all_labels), all_paths
 
 
 def extract_balanced_features(

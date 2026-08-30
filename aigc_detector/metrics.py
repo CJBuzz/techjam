@@ -24,6 +24,7 @@ def classification_metrics(
     specificity = float(tn / (tn + fp)) if tn + fp else float("nan")
     sensitivity = float(tp / (tp + fn)) if fn + tp else float("nan")
     return {
+        "sample_count": int(len(y)),
         "accuracy": float(accuracy_score(y, predictions)),
         "balanced_accuracy": float((specificity + sensitivity) / 2),
         "precision": float(precision_score(y, predictions, zero_division=0)),
