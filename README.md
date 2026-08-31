@@ -372,11 +372,11 @@ before the final Devpost submission.
 
 | Team member | Repository contribution |
 |---|---|
-| CJ | Core detector, robustness training, Kaggle workflow, and external evaluation |
+| See Jay | Core detector, robustness training, Kaggle workflow, and external evaluation |
 | Xuan Shan | Scaled 40K/100K training, GPU handoff, benchmarking, and documentation |
-| Kia-Lok | Phase-two/phase-three research experiments and validation tooling |
-| jxinnan | FFT experiments and early detector implementation |
-| origami100 | Dashboard/inference workflow and evaluation reporting |
+| Max | Phase-two/phase-three research experiments and validation tooling |
+| Xinnan | FFT experiments and early detector implementation |
+| Yu Bin | Dashboard/inference workflow and evaluation reporting |
 
 ## Submission checklist
 
