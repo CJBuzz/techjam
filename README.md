@@ -4,9 +4,99 @@ A lightweight multi-view detector for TikTok TechJam Track 5. The strongest vers
 
 The model stays far below the 2-billion-parameter limit and feature caching makes the initial frozen-encoder stage practical on modest hardware.
 
+## Final selected system
+
+The final candidate is `artifacts/mixed_wildfake_66k/diverse_initialized_40k_calibrated.pt` (SHA-256 `f219384c54ed2f57fdb9cdc3cdd92dbb6c7038a14c6d4ac467865cf08587d02f`). It contains a trained 820,225-parameter fusion head and configuration/calibration metadata. Inference loads frozen CLIP ViT-B/32 and EfficientNet-B0 encoders separately, for 92,676,989 total parameters—about 0.093B and comfortably below the 2B limit.
+
+Only the fusion head was optimized. Training used CIFAKE, SID labels 0/1, ImageNet real images, and WildFake DDIM, DDPM, BigGAN and StyleGAN synthetic images. ADM was held out for generator-level model selection. The TechJam COCO val2017/DALL·E Advanced demonstration images and all WildFake official test rows were excluded. A fail-closed decoded-pixel audit found zero overlap across all 59,982 train/model-selection/calibration rows and all 13,841 supplied demonstration images; see [the demonstration-overlap audit](docs/DEMONSTRATION_OVERLAP_AUDIT.md).
+
+## Development stack and assets
+
+- Development tools: Visual Studio Code, Codex desktop, PowerShell, Git/GitHub, Kaggle, Jupyter notebooks and Streamlit.
+- Models: Hugging Face CLIP ViT-B/32, torchvision EfficientNet-B0 and a custom PyTorch fusion MLP.
+- Libraries: PyTorch, torchvision, Hugging Face Transformers/Datasets, scikit-learn, NumPy, Pillow, tqdm and Streamlit.
+- Datasets: CIFAKE, SID_Set, official WildFake training data and ImageNet; GenImage GLIDE and the TechJam COCO/DALL·E set were evaluation-only.
+
+## Final robustness evaluation summary
+
+The selected checkpoint was evaluated on 6,000 GLIDE synthetic and 6,000 paired real images. The transformed summary averages JPEG quality 30, blur sigma 2.0, resize 0.25×, noise sigma 0.10, color factor 0.8 and center crop 0.8×.
+
+| Evaluation | ROC-AUC | Average precision | Balanced accuracy | Fake recall | Real FPR |
+|---|---:|---:|---:|---:|---:|
+| GLIDE clean | **0.9078** | **0.8978** | **74.58%** | 53.32% | 4.15% |
+| GLIDE transformed mean | **0.8252** | — | **67.59%** | — | — |
+| GLIDE transformed worst case | **0.7074** | — | **57.63%** | 18.58% | 3.32% |
+
+On the separate transformed 500-COCO/500-DALL·E TechJam selection, the checkpoint achieved 86.0% balanced accuracy, 0.9359 ROC-AUC, 0.9473 AP, 87.4% DALL·E recall and 84.6% COCO specificity. This set was not used to retrain, calibrate or select a new threshold.
+
+## Final error analysis
+
+The model's main trade-off is increased sensitivity to synthetic images at the cost of more false positives. On the TechJam selection it detected 437/500 DALL·E images but classified 77/500 COCO images as synthetic. The previous 40K checkpoint detected only 288/500 DALL·E images but produced just 2/500 COCO false positives. Despite this trade-off, the diverse model improved balanced accuracy from 78.6% to 86.0% and slightly improved ROC-AUC.
+
+GLIDE contains confident errors in both directions: real images such as `real/glide/003415.jpeg` received synthetic probability 0.9982, while generated images such as `ai/glide/005285.png` received probability 0.0015. JPEG quality 30 is the weakest balanced-accuracy condition, and resize 0.25× is the weakest ROC-AUC condition. These errors indicate residual source/content shortcuts and vulnerability of forensic features to recompression and resampling; a single threshold cannot repair the most confident mistakes.
+
+## Reproduce the final experiment
+
+Install dependencies with `uv sync`, prepare the audited official WildFake samples as described in [the diverse-retraining report](docs/WILDFAKE_DIVERSE_RETRAINING.md), and verify that `data/mixed_wildfake_66k/split_manifest.csv` has SHA-256 `6214c16fc37b7652d2b8a5a059506b7257b3bb6eaae005bbe649c3c40c6bf028`. On an RTX 4090 environment, run:
+
+```powershell
+python scripts/extract_scale_features.py `
+  --data-dir data/mixed_wildfake_66k `
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv `
+  --combined-output artifacts/mixed_wildfake_66k/laplacian_fft_features.pt `
+  --laplacian-output artifacts/mixed_wildfake_66k/laplacian_features.pt `
+  --augmentation-repeats 3 --batch-size 32 --seed 42 --device cuda
+
+python -m aigc_detector.train `
+  --data-dir data/mixed_wildfake_66k `
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv `
+  --cache artifacts/mixed_wildfake_66k/laplacian_fft_features.pt `
+  --output artifacts/mixed_wildfake_66k/diverse_initialized_40k.pt `
+  --forensic-mode laplacian_fft --augmentation-policy balanced `
+  --augmentation-repeats 3 `
+  --initialize-from-checkpoint artifacts/mixed_40k/balanced_consistency_w01_calibrated.pt `
+  --consistency-weight 0.1 --modality-dropout 0.1 --fft-dropout 0.15 `
+  --head-batch-size 256 --epochs 40 --patience 7 `
+  --learning-rate 1e-4 --seed 42 --device cuda
+
+python -m aigc_detector.calibrate `
+  --data-dir data/mixed_wildfake_66k `
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv `
+  --checkpoint artifacts/mixed_wildfake_66k/diverse_initialized_40k.pt `
+  --feature-cache artifacts/mixed_wildfake_66k/laplacian_fft_features.pt `
+  --output-checkpoint artifacts/mixed_wildfake_66k/diverse_initialized_40k_calibrated.pt `
+  --output-report artifacts/mixed_wildfake_66k/calibration.json `
+  --selection mixed --batch-size 32 --seed 42 --device cuda
+
+python -m aigc_detector.evaluate `
+  --data-dir data/genimage_glide_external `
+  --checkpoint artifacts/mixed_wildfake_66k/diverse_initialized_40k_calibrated.pt `
+  --output-dir artifacts/mixed_wildfake_66k/glide_worst `
+  --split all --profile worst --protocol paired-generators `
+  --batch-size 32 --seed 42 --device cuda
+```
+
+Inference writes the required probability JSON:
+
+```powershell
+python -m aigc_detector.predict path/to/images `
+  --checkpoint artifacts/mixed_wildfake_66k/diverse_initialized_40k_calibrated.pt `
+  --output predictions.json --device cuda
+```
+
+## Team member contributions
+
+The repository history records the following contributors and primary work areas:
+
+- Xuan Shan: scalable dataset preparation, split/duplicate auditing, RTX 4090 pipeline, mixed-40K/100K experiments, WildFake-diverse training, evaluation, compliance verification and integration.
+- CJ / CJBuzz: initial detector architecture, early robustness experiments, Kaggle training work, WildFake external adapter and repository restructuring.
+- Kia-Lok: Track 5 Phase-2 and Phase-3 research framework, Kaggle orchestration, promotion logic and tests.
+- origami100 / origami10004: Streamlit interface, dashboard/inference workflow and training-report contributions.
+- jxinnan: SD1.5 VAE/FFT experiments, perturbation evaluation, recorded metrics and research reports.
+
 ## Cross-generator evaluation
 
-The current mixed-5K results measure same-source held-out performance. They do not establish generalization to unseen image generators. The next experiment freezes the selected checkpoint and evaluates the untouched local test split followed by the B-Free FLUX/Stable Diffusion 3.5 external benchmark, without retraining or external threshold tuning.
+The original mixed-5K results measured same-source held-out performance and did not establish unseen-generator generalization. The final diverse checkpoint adds generator-separated WildFake training, holds ADM out for model selection, and is evaluated externally on GLIDE and the untouched TechJam COCO/DALL·E demonstration set. GLIDE is now a development benchmark because its results influenced final checkpoint selection; it must not be described as an untouched final test.
 
 See [the cross-generator generalization protocol](docs/GENERALIZATION_PROTOCOL.md) for the verified research rationale, license/download notes, safe dataset preparation, paired-generator metrics, and the one-command Stage 1–2 evaluation workflow.
 
