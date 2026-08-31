@@ -1,0 +1,33 @@
+{
+  "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+  "exact_input_identity": true,
+  "fallback_tier": "E0",
+  "files": {
+    "blur_2": {
+      "input_identity_status": "exact",
+      "path": "sd15_vae_fft/results/raw_fft/scores/production/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/blur_2.parquet",
+      "rows": 11841,
+      "sha256": "dd702d3683451f4d4dad93e9a1b8ed691fae9712613ff570e18250dfbf5e6a93"
+    },
+    "clean": {
+      "input_identity_status": "exact",
+      "path": "sd15_vae_fft/results/raw_fft/scores/production/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/clean.parquet",
+      "rows": 11841,
+      "sha256": "95daa1eff3656edbc30d2dd414c8ab4eb0e6c1b67d60f34a648aea9ccbd776c0"
+    },
+    "jpeg_q30": {
+      "input_identity_status": "exact",
+      "path": "sd15_vae_fft/results/raw_fft/scores/production/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/jpeg_q30.parquet",
+      "rows": 11841,
+      "sha256": "8e19425bbeaaec19559f53bfda0cc90e86effff00ca69d6e0bc266494fc36f9e"
+    },
+    "resize_0.25x": {
+      "input_identity_status": "exact",
+      "path": "sd15_vae_fft/results/raw_fft/scores/production/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/resize_0.25x.parquet",
+      "rows": 11841,
+      "sha256": "8f77f524f04085013f495d9d4948d86e633128753248cb664e538215a4420b38"
+    }
+  },
+  "reference_registry_sha256": "35264847b76ae536ae808e62ac7119a1f5200e1cb76e402db9146cfbf33991d0",
+  "status": "frozen before label read"
+}

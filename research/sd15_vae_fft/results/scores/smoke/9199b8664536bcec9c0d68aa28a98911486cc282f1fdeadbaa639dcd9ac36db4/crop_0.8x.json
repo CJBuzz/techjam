@@ -1,0 +1,8 @@
+{
+  "condition": "crop_0.8x",
+  "elapsed_seconds": 3.9563334429985844,
+  "reconstruction_bytes": 6412371,
+  "retries": 0,
+  "rows": 16,
+  "score_sha256": "f0e8027adf50cb01de468f645b70ff672b550181c7f598ae6e829d32b826e011"
+}

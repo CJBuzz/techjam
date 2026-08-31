@@ -1,0 +1,12 @@
+{
+  "condition": "clean",
+  "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+  "exact_input_identity": true,
+  "fallback_tier": "E0",
+  "input_mismatch_count": 0,
+  "path": "sd15_vae_fft/results/raw_fft/scores/production/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/clean.parquet",
+  "rows": 11841,
+  "score_sha256": "95daa1eff3656edbc30d2dd414c8ab4eb0e6c1b67d60f34a648aea9ccbd776c0",
+  "status": "complete",
+  "unique_image_ids": 11841
+}

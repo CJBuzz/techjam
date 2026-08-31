@@ -1,0 +1,21 @@
+experiment: sd15_vae_fft
+seed: 42
+model:
+  id: stable-diffusion-v1-5/stable-diffusion-v1-5
+  revision: 451f4fe16113bff5a5d2269ed5ad43b0592e9a14
+  component: vae_only
+  dtype: float16
+  latent: posterior_mode
+  decode_count: 1
+preprocessing:
+  size: 512
+  resampling: bicubic
+metrics:
+  primary: fft_high_bandmean_ratio
+  score_direction: 1
+  bands: [0.25, 0.50]
+runtime:
+  batch_size: 4
+  checkpoint_rows: 100
+  max_retries: 3
+

@@ -1,0 +1,12 @@
+{
+  "condition": "jpeg_q30",
+  "configuration_hash": "1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c",
+  "exact_input_identity": true,
+  "fallback_tier": "E0",
+  "input_mismatch_count": 0,
+  "path": "sd15_vae_fft/results/raw_fft/scores/production/1d5052206e341a4ae728dd42ca7e5c7d23e81aaf386b6cf2d1526f418e95150c/jpeg_q30.parquet",
+  "rows": 11841,
+  "score_sha256": "8e19425bbeaaec19559f53bfda0cc90e86effff00ca69d6e0bc266494fc36f9e",
+  "status": "complete",
+  "unique_image_ids": 11841
+}

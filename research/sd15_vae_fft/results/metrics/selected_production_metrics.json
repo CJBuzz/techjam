@@ -1,0 +1,190 @@
+{
+  "bootstrap": {
+    "paired": true,
+    "replicates": 2000,
+    "seed": 20260830,
+    "stratified": true
+  },
+  "fake": 7843,
+  "n": 11841,
+  "primary_score": "fft_high_bandmean_ratio",
+  "real": 3998,
+  "registry_sha256": "35264847b76ae536ae808e62ac7119a1f5200e1cb76e402db9146cfbf33991d0",
+  "results": [
+    {
+      "accuracy": 0.9988176674267376,
+      "auroc": 0.999441611663922,
+      "auroc_change_ci95": [
+        0.0,
+        0.0
+      ],
+      "auroc_change_from_clean": 0.0,
+      "auroc_ci95": [
+        0.998969287333964,
+        0.9998065541121957
+      ],
+      "average_precision": 0.9997849215100623,
+      "average_precision_change_ci95": [
+        0.0,
+        0.0
+      ],
+      "average_precision_change_from_clean": 0.0,
+      "average_precision_ci95": [
+        0.9996071507107723,
+        0.9999237057148737
+      ],
+      "balanced_accuracy": 0.9991074843809766,
+      "balanced_accuracy_change_ci95": [
+        0.0,
+        0.0
+      ],
+      "balanced_accuracy_change_from_clean": 0.0,
+      "balanced_accuracy_ci95": [
+        0.9985974754558204,
+        0.9995537421904883
+      ],
+      "condition": "clean",
+      "f1": 0.9991066870852475,
+      "fn": 14,
+      "fp": 0,
+      "fpr": 0.0,
+      "precision": 1.0,
+      "recall_tpr": 0.9982149687619534,
+      "specificity": 1.0,
+      "tn": 3998,
+      "tp": 7829
+    },
+    {
+      "accuracy": 0.9989865720800608,
+      "auroc": 0.9999971297646782,
+      "auroc_change_ci95": [
+        0.00019249153455988544,
+        0.0010259855479185555
+      ],
+      "auroc_change_from_clean": 0.0005555181007562693,
+      "auroc_ci95": [
+        0.9999939087228175,
+        0.9999993621699286
+      ],
+      "average_precision": 0.9999985396409701,
+      "average_precision_change_ci95": [
+        7.580565606691847e-05,
+        0.00039077137685714054
+      ],
+      "average_precision_change_from_clean": 0.00021361813090781112,
+      "average_precision_ci95": [
+        0.9999969029956175,
+        0.9999996754006082
+      ],
+      "balanced_accuracy": 0.9992349866122657,
+      "balanced_accuracy_change_ci95": [
+        -6.534489353571528e-05,
+        0.0003825066938671906
+      ],
+      "balanced_accuracy_change_from_clean": 0.00012750223128910054,
+      "balanced_accuracy_ci95": [
+        0.9987249776871095,
+        0.9996812444217773
+      ],
+      "condition": "jpeg_q30",
+      "f1": 0.9992344009187188,
+      "fn": 12,
+      "fp": 0,
+      "fpr": 0.0,
+      "precision": 1.0,
+      "recall_tpr": 0.9984699732245315,
+      "specificity": 1.0,
+      "tn": 3998,
+      "tp": 7831
+    },
+    {
+      "accuracy": 0.33797821129972133,
+      "auroc": 0.9311046094257126,
+      "auroc_change_ci95": [
+        -0.07339330724587079,
+        -0.06312278445738216
+      ],
+      "auroc_change_from_clean": -0.06833700223820938,
+      "auroc_ci95": [
+        0.9260054972500914,
+        0.9362505044438576
+      ],
+      "average_precision": 0.9554711858132072,
+      "average_precision_change_ci95": [
+        -0.04834083121975666,
+        -0.040315514014679046
+      ],
+      "average_precision_change_from_clean": -0.04431373569685504,
+      "average_precision_ci95": [
+        0.9514572131641157,
+        0.9594658278945764
+      ],
+      "balanced_accuracy": 0.5002550044625781,
+      "balanced_accuracy_change_ci95": [
+        -0.4993624888435547,
+        -0.49821496876195337
+      ],
+      "balanced_accuracy_change_from_clean": -0.49885247991839854,
+      "balanced_accuracy_ci95": [
+        0.5000637511156445,
+        0.5005737600408007
+      ],
+      "condition": "blur_2",
+      "f1": 0.0010194978972855868,
+      "fn": 7839,
+      "fp": 0,
+      "fpr": 0.0,
+      "precision": 1.0,
+      "recall_tpr": 0.0005100089251561902,
+      "specificity": 1.0,
+      "tn": 3998,
+      "tp": 4
+    },
+    {
+      "accuracy": 0.3414407566928469,
+      "auroc": 0.9951183356564167,
+      "auroc_change_ci95": [
+        -0.005412631567600712,
+        -0.0033567234656471908
+      ],
+      "auroc_change_from_clean": -0.004323276007505261,
+      "auroc_ci95": [
+        0.994030504510192,
+        0.9961270862385165
+      ],
+      "average_precision": 0.9973391670791252,
+      "average_precision_change_ci95": [
+        -0.003280230187569927,
+        -0.001772905253285995
+      ],
+      "average_precision_change_from_clean": -0.002445754430937086,
+      "average_precision_ci95": [
+        0.9965115264025292,
+        0.9980070162807133
+      ],
+      "balanced_accuracy": 0.5028688002040036,
+      "balanced_accuracy_change_ci95": [
+        -0.4971949509116409,
+        -0.4952186663266608
+      ],
+      "balanced_accuracy_change_from_clean": -0.49623868417697303,
+      "balanced_accuracy_ci95": [
+        0.5020400357006247,
+        0.5036975647073824
+      ],
+      "condition": "resize_0.25x",
+      "f1": 0.01140973630831643,
+      "fn": 7798,
+      "fp": 0,
+      "fpr": 0.0,
+      "precision": 1.0,
+      "recall_tpr": 0.00573760040800714,
+      "specificity": 1.0,
+      "tn": 3998,
+      "tp": 45
+    }
+  ],
+  "status": "COMPLETE FOR FOUR SELECTED CONDITIONS; NOT THE FULL 16-CELL MATRIX",
+  "threshold": 0.011662438977509737,
+  "threshold_status": "post-hoc full-clean oracle"
+}
