@@ -1,6 +1,6 @@
 import numpy as np
 
-from aigc_detector.ensemble import select_ensemble_policy
+from aigc_detector.experiments.ensemble import select_ensemble_policy
 
 
 def test_select_ensemble_policy_obeys_per_dataset_fpr_cap():

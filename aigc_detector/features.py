@@ -36,6 +36,7 @@ def extract_features(
     all_labels: list[torch.Tensor] = []
     all_paths: list[str] = []
     for repeat in range(augmentation_repeats):
+        # Repeat zero is clean; later repeats provide training-only robust views.
         if transform_mode is not None:
             transform = RobustTransform(transform_mode)
         else:
@@ -48,6 +49,7 @@ def extract_features(
             ImagePathDataset(rows, transform), batch_size=batch_size, shuffle=False, num_workers=0, collate_fn=pil_collate
         )
         for images, labels, paths in tqdm(loader, desc=f"features {repeat + 1}/{augmentation_repeats}"):
+            # FrozenEncoders returns CPU tensors so large caches do not occupy VRAM.
             all_features.append(encoders(images))
             all_labels.append(labels)
             all_paths.extend(paths)
@@ -67,10 +69,12 @@ def extract_condition_features(
     all_paths: list[str] = []
     all_conditions: list[str] = []
     for condition_index, condition in enumerate(conditions):
+        # Condition-major order makes per-severity slicing explicit and stable.
         for start in tqdm(range(0, len(rows), batch_size), desc=f"condition {condition}"):
             images: list[Image.Image] = []
             labels: list[int] = []
             for path, label in rows[start : start + batch_size]:
+                # Key randomness by path so batches and hardware do not change views.
                 transform = DeterministicTransform(condition, seed, str(path), condition_index)
                 with Image.open(path) as source:
                     images.append(transform(source.convert("RGB")))
@@ -97,6 +101,7 @@ def extract_condition_tta_features(
         labels: list[int] = []
         batch_rows = rows[start : start + batch_size]
         for path, label in batch_rows:
+            # Official corruption happens before optional inference-time views.
             official_transform = DeterministicTransform(condition, seed, str(path), 0)
             with Image.open(path) as source:
                 official_image = official_transform(source.convert("RGB"))
@@ -105,6 +110,7 @@ def extract_condition_tta_features(
             all_paths.append(str(path))
         encoded = encoders(images)
         view_count = len(images) // len(batch_rows)
+        # Preserve [image, view, feature] so callers average logits, not features.
         feature_batches.append(encoded.view(len(batch_rows), view_count, -1))
         all_labels.append(torch.tensor(labels, dtype=torch.float32))
     return torch.cat(feature_batches), torch.cat(all_labels), all_paths
@@ -123,11 +129,13 @@ def extract_features_with_factory(
     all_paths: list[str] = []
     for start in tqdm(range(0, len(rows), batch_size), desc=description):
         images, labels = [], []
+        # Global indices keep factory assignments invariant to batch size.
         for index, (path, label) in enumerate(rows[start : start + batch_size], start=start):
             with Image.open(path) as source:
                 images.append(transform_factory(path, index)(source.convert("RGB")))
             labels.append(label)
             all_paths.append(str(path))
+        # Append whole batches without reordering paths or labels.
         all_features.append(encoders(images))
         all_labels.append(torch.tensor(labels, dtype=torch.float32))
     return torch.cat(all_features), torch.cat(all_labels), all_paths
@@ -143,6 +151,7 @@ def extract_balanced_features(
     for repeat in range(augmentation_repeats):
         examples = []
         for index, row in enumerate(rows):
+            # Round-robin assignment balances corruption families across originals.
             group = "clean" if repeat == 0 else BALANCED_TRANSFORM_GROUPS[
                 (index * (augmentation_repeats - 1) + repeat - 1) % len(BALANCED_TRANSFORM_GROUPS)
             ]
@@ -158,6 +167,7 @@ def extract_balanced_features(
                 labels.append(label)
                 all_paths.append(str(path))
                 all_groups.append(group)
+                # Pair metadata lets training regroup every view of an original.
                 original_indices.append(index)
             all_features.append(encoders(images))
             all_labels.append(torch.tensor(labels, dtype=torch.float32))

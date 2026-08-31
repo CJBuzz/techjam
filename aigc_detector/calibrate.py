@@ -57,6 +57,7 @@ def main() -> None:
     if clean_features.shape[1] != expected_width:
         raise ValueError(f"Calibration cache width {clean_features.shape[1]} does not match checkpoint width {expected_width}")
     calibration_rows = load_split_manifest(args.data_dir, args.split_manifest)["calibration"]
+    # Row count and label order guard against pairing logits with the wrong originals.
     if len(calibration_rows) != len(clean_labels):
         raise ValueError("Calibration cache row count does not match the split manifest")
     if not torch.equal(clean_labels, torch.tensor([label for _, label in calibration_rows], dtype=torch.float32)):
@@ -64,6 +65,7 @@ def main() -> None:
 
     # Assign exact severities evenly so one corruption family cannot dominate.
     transformed_specs = [spec for spec in SEVERITY_SPECS if spec[0] != "clean"]
+    # Round-robin assignment gives every severity nearly equal calibration weight.
     assignments = [transformed_specs[index % len(transformed_specs)] for index in range(len(calibration_rows))]
     transformed_features, transformed_labels, _ = extract_features_with_factory(
         calibration_rows,
@@ -81,6 +83,7 @@ def main() -> None:
     mixed_labels = torch.cat((clean_labels, transformed_labels))
     clean_temperature = fit_temperature(clean_logits, clean_labels)
     mixed_temperature = fit_temperature(mixed_logits, mixed_labels)
+    # Report both policies, but serialize only the explicitly selected temperature.
     chosen_temperature = clean_temperature if args.selection == "clean" else mixed_temperature
     chosen_probabilities = torch.sigmoid(mixed_logits / chosen_temperature)
     selected_threshold = select_threshold(mixed_labels, chosen_probabilities, "balanced")
@@ -120,6 +123,7 @@ def main() -> None:
         "operational_thresholds": thresholds,
     }
     output_metadata = {
+        # Calibration augments provenance without discarding original training metadata.
         **metadata,
         "calibration": report,
         "operational_thresholds": thresholds,
@@ -127,6 +131,7 @@ def main() -> None:
         "threshold_objective": "balanced_mixed_calibration",
     }
     head.to("cpu")
+    # The output checkpoint is deployable without the calibration feature cache.
     save_checkpoint(args.output_checkpoint, head, config, chosen_temperature, output_metadata)
     args.output_report.parent.mkdir(parents=True, exist_ok=True)
     args.output_report.write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")

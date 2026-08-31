@@ -43,6 +43,7 @@ def save_cache(
     forensic_mode: str,
 ) -> None:
     """Write the scale-cache schema used by training and Kaggle handoffs."""
+    # Labels and pair metadata travel with features so training can audit alignment.
     _save_cache(path, {
         "train_features": train_x,
         "train_labels": train_y,
@@ -59,6 +60,7 @@ def save_cache(
         "manifest": manifest,
         "split_manifest": str(split_manifest),
         "forensic_mode": forensic_mode,
+        # This explicit audit flag prevents consumers from assuming test availability.
         "test_features_extracted": False,
     })
 
@@ -81,6 +83,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     splits = load_split_manifest(args.data_dir, args.split_manifest)
+    # All rows are used only for the fingerprint; reserved-test pixels stay unread.
     all_rows = load_labeled_paths(args.data_dir)
     device = choose_device(args.device)
     config = ModelConfig(forensic_mode="laplacian_fft", forensic_dim=2560)
@@ -93,6 +96,7 @@ def main() -> None:
     )
     val_x, val_y, _ = extract_features(splits["model_selection"], encoders, args.batch_size)
     calibration_x, calibration_y, _ = extract_features(splits["calibration"], encoders, args.batch_size)
+    # Robust selection diagnostics never reuse the independent calibration rows.
     robust_val_x, robust_val_y, _, robust_val_conditions = extract_condition_features(
         splits["model_selection"], encoders, args.batch_size, ROBUST_SELECTION_CONDITIONS, args.seed
     )
@@ -120,6 +124,7 @@ def main() -> None:
         "split_manifest": str(args.split_manifest),
         "test_features_extracted": False,
     }
+    # Both caches share identical row ordering and provenance metadata.
     _save_cache(
         args.combined_output,
         {
@@ -133,6 +138,7 @@ def main() -> None:
         },
     )
     laplacian_width = config.clip_dim + 1280
+    # Laplacian features are an exact prefix, avoiding a second encoder pass.
     laplacian_config = ModelConfig(forensic_mode="laplacian", forensic_dim=1280)
     _save_cache(
         args.laplacian_output,

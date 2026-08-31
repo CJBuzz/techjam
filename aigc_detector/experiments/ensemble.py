@@ -10,11 +10,11 @@ import numpy as np
 import torch
 from sklearn.metrics import roc_auc_score
 
-from .data import load_labeled_paths
-from .features import extract_features
-from .metrics import classification_metrics
-from .model import FrozenEncoders, load_checkpoint
-from .train import choose_device
+from ..data import load_labeled_paths
+from ..features import extract_features
+from ..metrics import classification_metrics
+from ..model import FrozenEncoders, load_checkpoint
+from ..train import choose_device
 
 
 ENCODER_FIELDS = ("clip_model", "clip_dim", "forensic_dim", "forensic_mode")

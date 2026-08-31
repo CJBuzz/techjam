@@ -30,6 +30,7 @@ def load_labeled_paths(root: str | Path) -> list[tuple[Path, int]]:
     """Load root/{real,ai}/... while accepting a few common folder aliases."""
     root = Path(root)
     rows: list[tuple[Path, int]] = []
+    # Labels come from the class directory, never from filename heuristics.
     for child in root.iterdir() if root.exists() else []:
         if not child.is_dir():
             continue
@@ -56,6 +57,7 @@ def load_split_manifest(root: str | Path, manifest: str | Path) -> dict[str, lis
     splits: dict[str, list[tuple[Path, int]]] = {}
     with manifest.open(newline="", encoding="utf-8") as handle:
         for row in csv.DictReader(handle):
+            # Resolve persisted relative paths against the audited dataset root.
             path = root / row["path"]
             if not path.is_file():
                 raise FileNotFoundError(f"Manifest image does not exist: {path}")
@@ -72,6 +74,7 @@ def stratified_split(
     rng = random.Random(seed)
     train: list[tuple[Path, int]] = []
     val: list[tuple[Path, int]] = []
+    # Split each class independently so small datasets remain approximately balanced.
     for label in (0, 1):
         group = [row for row in rows if row[1] == label]
         rng.shuffle(group)
@@ -79,6 +82,7 @@ def stratified_split(
         n_val = min(n_val, len(group) - 1)
         val.extend(group[:n_val])
         train.extend(group[n_val:])
+    # Final shuffles avoid returning class-contiguous batches to callers.
     rng.shuffle(train)
     rng.shuffle(val)
     return train, val
@@ -100,6 +104,7 @@ def stratified_train_val_test_split(
         raise ValueError("Validation and test fractions must be positive and sum to less than 1")
     root = Path(root).resolve()
     groups: dict[tuple[int, str], list[tuple[Path, int]]] = {}
+    # Stratifying on both fields prevents a large source from dominating a split.
     for row in rows:
         path, label = row
         source = image_source(path, root)
@@ -113,6 +118,7 @@ def stratified_train_val_test_split(
         if len(group) < 3:
             raise ValueError(f"Need at least three images for class/source group {key}; got {len(group)}")
         rng.shuffle(group)
+        # Slice originals once; transformed copies are created only downstream.
         n_val = max(1, round(len(group) * validation_fraction))
         n_test = max(1, round(len(group) * test_fraction))
         if n_val + n_test >= len(group):
@@ -145,6 +151,7 @@ class RobustTransform:
             operation, parameter = resolve_transform_condition(self.mode)
             return self._apply_one(image, operation, parameter)
         count = random.randint(1, self.max_ops)
+        # Sampling without replacement avoids applying the same corruption twice.
         for mode in random.sample(self.names[1:], k=min(count, len(self.names) - 1)):
             image = self._apply_one(image, mode)
         return image
@@ -154,6 +161,7 @@ class RobustTransform:
         if mode == "clean":
             return image
         if mode == "jpeg":
+            # Round-trip through bytes so the model sees actual codec artifacts.
             buffer = io.BytesIO()
             quality = int(parameter) if parameter is not None else random.choice((30, 50, 70, 90))
             image.save(buffer, format="JPEG", quality=quality)
@@ -164,6 +172,7 @@ class RobustTransform:
             sigma = float(parameter) if parameter is not None else random.choice((0.5, 1.0, 2.0))
             return image.filter(ImageFilter.GaussianBlur(sigma))
         if mode == "resize":
+            # Restore the native canvas after downsampling, matching redistribution.
             scale = float(parameter) if parameter is not None else random.choice((0.25, 0.5))
             size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
             return image.resize(size, Image.Resampling.BILINEAR).resize(image.size, Image.Resampling.BILINEAR)
@@ -178,6 +187,7 @@ class RobustTransform:
                 image = enhancer(image).enhance(factor)
             return image
         crop_fraction = float(parameter) if parameter is not None else 0.8
+        # Center-crop and restore size so only content loss, not tensor shape, changes.
         crop_w, crop_h = round(image.width * crop_fraction), round(image.height * crop_fraction)
         left, top = (image.width - crop_w) // 2, (image.height - crop_h) // 2
         return image.crop((left, top, left + crop_w, top + crop_h)).resize(image.size, Image.Resampling.BICUBIC)
@@ -293,6 +303,7 @@ class DeterministicTransform:
         self.operations = resolved
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        # Save both RNGs because noise uses NumPy while operation choices use random.
         python_state = random.getstate()
         numpy_state = np.random.get_state()
         try:
@@ -303,6 +314,7 @@ class DeterministicTransform:
                 image = RobustTransform._apply_one(image, operation, parameter)
             return image
         finally:
+            # Feature extraction must not perturb caller-level sampling or shuffling.
             random.setstate(python_state)
             np.random.set_state(numpy_state)
 
@@ -342,6 +354,7 @@ class ImagePathDataset(Dataset):
     def __getitem__(self, index: int) -> tuple[Image.Image, int, str]:
         path, label = self.rows[index]
         with Image.open(path) as source:
+            # Materialize RGB before the file handle closes; workers return PIL objects.
             image = source.convert("RGB")
         if self.transform:
             image = self.transform(image)

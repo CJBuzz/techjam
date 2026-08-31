@@ -8,10 +8,10 @@ import torch
 from PIL import Image
 from tqdm import tqdm
 
-from .data import find_images
+from ..data import find_images
 from .ensemble import compatible_encoder_config, score_head
-from .model import FrozenEncoders, load_checkpoint
-from .train import choose_device
+from ..model import FrozenEncoders, load_checkpoint
+from ..train import choose_device
 
 
 def main() -> None:

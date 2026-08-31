@@ -40,6 +40,7 @@ def image_quality_statistics(images: list[Image.Image]) -> torch.Tensor:
     """Six inexpensive degradation descriptors without raw size/format shortcuts."""
     rows = []
     for image in images:
+        # Bound diagnostic cost without exposing raw width or height to a gate.
         gray_image = image.convert("L")
         width, height = gray_image.size
         scale = min(1.0, 256.0 / max(width, height))
@@ -49,6 +50,7 @@ def image_quality_statistics(images: list[Image.Image]) -> torch.Tensor:
         lap = -4 * gray + np.roll(gray, 1, 0) + np.roll(gray, -1, 0) + np.roll(gray, 1, 1) + np.roll(gray, -1, 1)
         lap_energy = float(np.log1p(1000 * np.var(lap[1:-1, 1:-1])))
         spectrum = np.abs(np.fft.fftshift(np.fft.fft2((gray - gray.mean()) * np.outer(np.hanning(gray.shape[0]), np.hanning(gray.shape[1]))))) ** 2
+        # Summaries capture sharpness, spectral falloff, blocking, and clipping.
         yy, xx = np.indices(gray.shape)
         radius = np.sqrt(((yy - (gray.shape[0] - 1) / 2) / max(gray.shape[0], 1)) ** 2 + ((xx - (gray.shape[1] - 1) / 2) / max(gray.shape[1], 1)) ** 2)
         low = float(spectrum[radius < 0.12].mean()) + 1e-8
@@ -76,6 +78,7 @@ class FrozenEncoders(nn.Module):
         self.config = config
         self.device = device
         cache_dir = _project_hf_cache()
+        # Both backbones are pretrained feature extractors; only the fusion head trains.
         self.processor = AutoImageProcessor.from_pretrained(config.clip_model, cache_dir=cache_dir)
         self.clip = CLIPVisionModelWithProjection.from_pretrained(config.clip_model, cache_dir=cache_dir)
         project_torch_hub = PROJECT_ROOT / ".torch-cache" / "hub"
@@ -91,6 +94,7 @@ class FrozenEncoders(nn.Module):
                 f"forensic_dim={config.forensic_dim} does not match "
                 f"forensic_mode={config.forensic_mode!r} (expected {expected_dim})"
             )
+        # Freezing here prevents later callers from accidentally enabling gradients.
         self.eval().requires_grad_(False).to(device)
 
     @staticmethod
@@ -114,6 +118,7 @@ class FrozenEncoders(nn.Module):
         gray = x.mean(dim=1, keepdim=True)
         kernel = torch.tensor([[0.0, 1.0, 0.0], [1.0, -4.0, 1.0], [0.0, 1.0, 0.0]], device=device)
         edge = F.conv2d(F.pad(gray, (1, 1, 1, 1), mode="reflect"), kernel.view(1, 1, 3, 3)).abs()
+        # Per-image robust scaling keeps a few strong edges from saturating the view.
         scale = torch.quantile(edge.flatten(1), 0.99, dim=1).clamp_min(1e-4).view(-1, 1, 1, 1)
         return cls._imagenet_normalize((edge / scale).clamp(0, 1), device)
 
@@ -126,11 +131,13 @@ class FrozenEncoders(nn.Module):
             torch.hann_window(height, periodic=False, device=device),
             torch.hann_window(width, periodic=False, device=device),
         ).view(1, 1, height, width)
+        # Mean removal suppresses DC; the Hann window reduces artificial border energy.
         spectrum = torch.fft.fftshift(torch.fft.fft2((gray - gray.mean(dim=(-2, -1), keepdim=True)) * window))
         magnitude = torch.log1p(spectrum.abs())
         flat = magnitude.flatten(1)
         low = torch.quantile(flat, 0.01, dim=1).view(-1, 1, 1, 1)
         high = torch.quantile(flat, 0.99, dim=1).view(-1, 1, 1, 1)
+        # Robust per-image scaling makes spectra comparable across exposure levels.
         normalized = ((magnitude - low) / (high - low).clamp_min(1e-4)).clamp(0, 1)
         return cls._imagenet_normalize(normalized, device)
 
@@ -141,14 +148,17 @@ class FrozenEncoders(nn.Module):
             views.append(self._laplacian_tensor(x, self.device))
         if self.config.forensic_mode in {"fft", "laplacian_fft"}:
             views.append(self._fft_tensor(x, self.device))
+        # The same frozen EfficientNet processes each forensic view independently.
         return torch.cat([F.normalize(self.forensic(view), dim=1) for view in views], dim=1)
 
     @torch.inference_mode()
     def forward(self, images: list[Image.Image]) -> torch.Tensor:
+        # CLIP keeps its own official processor; forensic views use fixed 224px inputs.
         clip_inputs = self.processor(images=images, return_tensors="pt")["pixel_values"].to(self.device)
         clip_features = self.clip(pixel_values=clip_inputs).image_embeds
         forensic_features = self._forensic_features(images)
         features = torch.cat((F.normalize(clip_features, dim=1), forensic_features), dim=1).cpu()
+        # Quality descriptors exist only for historical gated heads, not the selected head.
         if self.config.quality_dim:
             quality = image_quality_statistics(images)
             if quality.shape[1] != self.config.quality_dim:
@@ -160,7 +170,9 @@ class FrozenEncoders(nn.Module):
 class FusionHead(nn.Module):
     def __init__(self, config: ModelConfig) -> None:
         super().__init__()
+        # Feature blocks are concatenated in the fixed CLIP/Laplacian/FFT order.
         input_dim = config.clip_dim + config.forensic_dim
+        # Keep the only trainable component small relative to the frozen backbones.
         self.network = nn.Sequential(
             nn.Linear(input_dim, config.hidden_dim),
             nn.LayerNorm(config.hidden_dim),
@@ -288,6 +300,7 @@ def save_checkpoint(
 
 
 def load_checkpoint(path: str | Path, device: torch.device) -> tuple[nn.Module, ModelConfig, float, dict]:
+    # weights_only avoids executing arbitrary pickled code from checkpoint files.
     payload = torch.load(path, map_location=device, weights_only=True)
     config = ModelConfig(**payload["config"])
     if config.head_type == "mixture":
@@ -298,6 +311,7 @@ def load_checkpoint(path: str | Path, device: torch.device) -> tuple[nn.Module, 
         head = FusionHead(config)
     else:
         raise ValueError(f"Unknown head type: {config.head_type!r}")
+    # Construct from serialized configuration before enforcing exact parameter shapes.
     head = head.to(device)
     head.load_state_dict(payload["head_state_dict"])
     head.eval()

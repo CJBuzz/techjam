@@ -45,6 +45,7 @@ def robustness_scorecard(condition_results: dict[str, dict[str, object]]) -> dic
     transformed = {
         name: values["overall"] for name, values in condition_results.items() if name != "clean"
     }
+    # Keep clean separate so robustness averages cannot hide a clean-data regression.
     balanced = {name: float(metrics["balanced_accuracy"]) for name, metrics in transformed.items()}
     aucs = {name: float(metrics["roc_auc"]) for name, metrics in transformed.items()}
     return {
@@ -87,6 +88,7 @@ def paired_generator_metrics(
         raise ValueError("Paired-generator evaluation requires real images and at least one AI source")
     source_reports: dict[str, dict[str, object]] = {}
     for generator in generators:
+        # Reuse the identical real set for every one-generator binary comparison.
         fake_mask = torch.tensor(
             [source == generator and int(label) == 1 for source, label in zip(sources, labels.tolist())],
             dtype=torch.bool,
@@ -97,6 +99,7 @@ def paired_generator_metrics(
         report["synthetic_images"] = int(fake_mask.sum())
         source_reports[generator] = report
     balanced = {name: float(report["balanced_accuracy"]) for name, report in source_reports.items()}
+    # Macro averaging prevents a large generator folder from dominating the report.
     aucs = {name: float(report["roc_auc"]) for name, report in source_reports.items()}
     real_predicted_ai = probabilities[real_mask] >= threshold
     return {
@@ -117,6 +120,7 @@ def source_diagnostics(
     """Report class-aware diagnostics for sources that may contain one class only."""
     reports = {}
     for source in sorted(set(sources)):
+        # Single-class sources cannot support ROC-AUC, so report prevalence and rates.
         mask = torch.tensor([item == source for item in sources], dtype=torch.bool)
         source_labels = labels[mask]
         source_probabilities = probabilities[mask]
@@ -124,6 +128,7 @@ def source_diagnostics(
             "images": int(mask.sum()),
             "true_ai_fraction": float(source_labels.mean()),
             "predicted_ai_fraction": float((source_probabilities >= threshold).float().mean()),
+            # Mean probability remains informative even when threshold metrics degenerate.
             "mean_probability": float(source_probabilities.mean()),
         }
     return reports
@@ -192,6 +197,7 @@ def main() -> None:
     checkpoint_paths = args.checkpoints or [Path("artifacts/diverse_initialized_40k_calibrated.pt")]
     models = []
     for checkpoint_path in checkpoint_paths:
+        # Compatible heads share one expensive frozen-encoder feature pass.
         head, config, temperature, checkpoint_metadata = load_checkpoint(checkpoint_path, device)
         models.append((str(checkpoint_path), head, config, temperature, checkpoint_metadata))
     response_head = response_temperature = response_threshold = response_metadata = None
@@ -212,6 +218,7 @@ def main() -> None:
     reference_config = models[0][2]
     encoder_fields = ("clip_model", "clip_dim", "forensic_dim", "forensic_mode")
     reference_signature = tuple(getattr(reference_config, field) for field in encoder_fields)
+    # Feature reuse is valid only when every encoder-defining field agrees.
     if any(tuple(getattr(config, field) for field in encoder_fields) != reference_signature for _, _, config, _, _ in models[1:]):
         raise ValueError("All checkpoints in one evaluation must use the same encoder configuration")
     encoder_config = reference_config
@@ -221,6 +228,7 @@ def main() -> None:
     encoders = FrozenEncoders(encoder_config, device)
     all_rows = load_labeled_paths(args.data_dir)
     if args.split == "all":
+        # "all" is reserved for separately curated external benchmark folders.
         rows = all_rows
     else:
         _, validation_rows, test_rows = stratified_train_val_test_split(
@@ -249,6 +257,7 @@ def main() -> None:
     conditions = ROBUSTNESS_CONDITIONS if args.profile == "full" else ("clean", *ROBUST_SELECTION_CONDITIONS)
     metadata["conditions"] = list(conditions)
     for name in conditions:
+        # Extract once per condition, then score every compatible checkpoint.
         if response_head is not None:
             from .analysis.response import extract_response_features
 
@@ -275,6 +284,7 @@ def main() -> None:
                 ]
                 threshold = float(checkpoint_metadata.get("threshold", 0.5))
                 with torch.no_grad():
+                    # Average view logits before calibration; probabilities are nonlinear.
                     feature_rows = model_features.flatten(0, 1).to(device)
                     view_logits = head(feature_rows).view(model_features.shape[:2])
                     probabilities = torch.sigmoid(average_view_logits(view_logits) / temperature).cpu()
@@ -296,6 +306,7 @@ def main() -> None:
                 condition_result["by_source"] = by_source
             model_results[checkpoint_path][name] = condition_result
             predictions = probabilities >= threshold
+            # Error ranking is diagnostic only and never feeds back into selection here.
             for index, (truth, prediction) in enumerate(zip(labels.bool(), predictions)):
                 if bool(truth) != bool(prediction):
                     error_records[checkpoint_path].append({
@@ -323,6 +334,7 @@ def main() -> None:
                     },
                 }
     for checkpoint_path in model_results:
+        # Summaries are computed only after all exact-condition cells are complete.
         if args.protocol == "paired-generators":
             condition_scores = {
                 condition: float(values["paired_generators"]["macro_balanced_accuracy"])
@@ -361,6 +373,7 @@ def main() -> None:
             key=lambda item: item["pred"] if item["error_type"] == "false_positive" else 1 - item["pred"],
             reverse=True,
         )
+        # Retain the most confident mistakes for bounded qualitative review.
         error_records[checkpoint_path] = ranked[: args.top_errors]
     if len(models) == 1:
         results = {

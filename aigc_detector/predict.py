@@ -36,6 +36,7 @@ def main() -> None:
     if not args.checkpoint.is_file():
         raise FileNotFoundError(f"Checkpoint does not exist: {args.checkpoint}")
     head, config, temperature, _ = load_checkpoint(args.checkpoint, device)
+    # Rebuild preprocessing from checkpoint metadata so inference cannot drift.
     encoders = FrozenEncoders(config, device)
     paths = find_images(args.image_dir)
     if not paths:
@@ -55,6 +56,7 @@ def main() -> None:
 
         if not images:
             continue
+        # Apply the fitted temperature to logits before converting to probability.
         features = encoders(images).to(device)
         with torch.no_grad():
             probabilities = torch.sigmoid(head(features) / temperature).cpu().tolist()
@@ -63,6 +65,7 @@ def main() -> None:
             for path, pred in zip(batch_paths, probabilities, strict=True)
         )
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    # Emit only the two fields required by the challenge/dashboard contract.
     args.output.write_text(json.dumps(records, indent=2) + "\n", encoding="utf-8")
     print(f"Wrote {len(records)} predictions to {args.output}")
 

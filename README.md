@@ -27,6 +27,11 @@ Open <http://localhost:8501>. `infer.sh` uses the submitted checkpoint by
 default and writes `output.json`; the dashboard validates that file and renders
 each image on a human/real-to-AIGC probability spectrum.
 
+If `uv run` tries to rebuild the editable package in an offline environment,
+use `uv run --no-sync streamlit run app.py` after the environment has already
+been installed. A missing `output.json` means inference has not run; stale
+dashboard results can be refreshed after rerunning `./infer.sh`.
+
 To run only the required machine-readable inference:
 
 ```bash

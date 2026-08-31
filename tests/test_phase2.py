@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aigc_detector.phase2 import DEPLOYABLE_SOURCES, DIAGNOSTIC_SOURCES, aggregate, rank_candidates
+from aigc_detector.experiments.phase2 import DEPLOYABLE_SOURCES, DIAGNOSTIC_SOURCES, aggregate, rank_candidates
 
 
 ROOT = Path(__file__).resolve().parents[1]

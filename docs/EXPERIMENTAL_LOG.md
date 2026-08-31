@@ -113,6 +113,56 @@ explicit.
 - remaining `scripts/` — local data preparation, 4090 handoff, external
   evaluation, and historical compatibility launchers.
 
+## Consolidated later investigations
+
+### GenImage GLIDE and ensemble selection
+
+GLIDE was used as external development data, so it is not an untouched final
+test. The locked 40K and 100K checkpoints reached clean ROC-AUC 68.77% and
+69.96%; fake recall was only 14.15% and 8.83%. A compatible 15%/85% 40K/100K
+probability blend selected on GLIDE increased ROC-AUC to 70.97% under a 5% real
+false-positive ceiling, but fake recall remained 19.93%. The ensemble was
+therefore provisional and was not selected for submission.
+
+### Generator-diverse WildFake adaptation
+
+The diverse experiment contained 65,982 usable originals: 47,994 train, 9,988
+model selection, 2,000 calibration, and 6,000 reserved test. It retained legacy
+40K assignments, added ImageNet reals plus DDIM, DDPM, BigGAN, and StyleGAN
+fakes to training, and held ADM out for model selection. DALL-E Advanced and
+COCO val2017 demonstration images were excluded; decoded-pixel and dHash audits
+rejected cross-split conflicts.
+
+The 40K-initialized candidate beat the 100K-initialized candidate on model
+selection (ROC-AUC 0.8480 versus 0.8407) and became the selected checkpoint. On
+external GLIDE it reached clean ROC-AUC 0.9078 and mean severe ROC-AUC 0.8252.
+Mixed-condition calibration used only the separate 2,000-image split and chose
+temperature 0.6637356. The exact training manifest is absent from this checkout,
+so its reported hash and demonstration-set exclusion still require provenance
+recovery before submission.
+
+### SD1.5 VAE residual FFT study
+
+The independent `research/sd15_vae_fft/` study compared raw-image spectra with
+FFT energy in Stable Diffusion 1.5 VAE reconstruction residuals on 11,841 COCO
+real/DALL-E 3 fake examples. VAE residual AUROC was 0.9994 clean, 1.0000 at JPEG
+Q30, 0.9311 under blur 2, and 0.9951 after 0.25× resizing. Raw FFT fell to
+0.4347 and 0.4913 for blur and resize. Fixed-clean-threshold accuracy still
+collapsed after smoothing because scores shifted downward; this is a
+calibration warning rather than a ranking failure. This training-free study is
+not part of the submitted detector; its protocol and artifact index remain in
+`research/sd15_vae_fft/README.md`.
+
+## Deferred work
+
+- TextureCrop remains a validation-only preprocessing comparison for native
+  images at least 224×224, with global resize retained for smaller inputs.
+- A generator/source-disjoint official WildFake study remains the most useful
+  next training experiment. Preserve official hierarchy and licensing, keep
+  duplicate groups atomic, and separate selection, calibration, and test.
+- Selective final-block EfficientNet fine-tuning should follow only if a frozen
+  generator-held-out baseline justifies its cost; initially keep CLIP frozen.
+
 ## Data and evaluation rules
 
 - Exact decoded-pixel duplicates and near-duplicate groups stay within one
@@ -137,8 +187,8 @@ explicit.
 
 ## Consolidated historical documents
 
-This file supersedes the former top-level `EVALUATION_REPORT.md`,
-`CHANGES_FROM_MAIN.md`, `docs/MIXED_40K_BENCHMARK.md`, and
-`docs/GENERALIZATION_PROTOCOL.md`. Their durable commands and detailed results
-remain recorded in `AGENTS.md`; the README carries only the selected submission
-story and commands.
+This file supersedes the former status/UI guides, experiment roadmap, one-off
+evaluation reports, branch note, and individual ensemble, GLIDE, WildFake, and
+mixed-40K documents. Durable commands and detailed results remain in
+`AGENTS.md` and machine-readable artifacts; the README carries only the
+selected submission story and commands.
