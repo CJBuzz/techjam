@@ -10,32 +10,75 @@ validation, test-inference, JSON-output, and dashboard path. The checkpoint has
 820,225 trainable head parameters; its frozen CLIP and EfficientNet backbones
 keep the complete system well below the challenge's 2-billion-parameter limit.
 
-## Quick start
+## Setup and quick start
 
-Requirements: Python 3.10–3.12, [`uv`](https://docs.astral.sh/uv/), and about
-2 GB of free space for pretrained encoder weights on first use.
+### Requirements
+
+- Git;
+- Python 3.10–3.12;
+- [`uv`](https://docs.astral.sh/uv/);
+- approximately 2 GB of free disk space for the Python environment and frozen
+  encoder weights;
+- internet access for the first setup/inference run.
+
+The submitted 3.2 MB detector head is tracked at
+`artifacts/diverse_initialized_40k_calibrated.pt`. CLIP ViT-B/32 and
+EfficientNet-B0 are public pretrained backbones and are downloaded separately
+on first use.
+
+### Fresh clone
 
 ```bash
-uv sync
-mkdir -p images
-# Copy JPG, PNG, WebP, BMP, or TIFF files into images/, then:
+git clone https://github.com/CJBuzz/techjam.git
+cd techjam
+uv sync --frozen
+uv run --frozen python scripts/download_pretrained_models.py \
+  --checkpoint artifacts/diverse_initialized_40k_calibrated.pt
+```
+
+The download command fetches the exact CLIP model named by the checkpoint and
+the ImageNet EfficientNet-B0 weights. It stores them under the ignored,
+project-local `.hf-cache/` and `.torch-cache/` directories. It is idempotent:
+rerunning it validates or reuses downloaded files instead of downloading them
+again.
+
+### Run inference and the dashboard
+
+Copy JPG, PNG, WebP, BMP, or TIFF files into the existing `images/` directory,
+then run:
+
+```bash
 ./infer.sh
-uv run streamlit run app.py
+uv run --no-sync streamlit run app.py
 ```
 
 Open <http://localhost:8501>. `infer.sh` uses the submitted checkpoint by
 default and writes `output.json`; the dashboard validates that file and renders
 each image on a human/real-to-AIGC probability spectrum.
 
-If `uv run` tries to rebuild the editable package in an offline environment,
-use `uv run --no-sync streamlit run app.py` after the environment has already
-been installed. A missing `output.json` means inference has not run; stale
-dashboard results can be refreshed after rerunning `./infer.sh`.
+`infer.sh` is also safe to use immediately after cloning. When `uv` is
+available it creates or synchronizes the locked environment, runs the
+pretrained-model downloader, and then performs inference. The explicit setup
+commands above are recommended because they surface installation or network
+errors before the demo.
+
+On Windows, run `infer.sh` from Git Bash. The equivalent PowerShell commands
+are:
+
+```powershell
+uv sync --frozen
+uv run --frozen python scripts/download_pretrained_models.py --checkpoint artifacts/diverse_initialized_40k_calibrated.pt
+uv run --no-sync python -m aigc_detector.predict images --checkpoint artifacts/diverse_initialized_40k_calibrated.pt --output output.json
+uv run --no-sync streamlit run app.py
+```
+
+A missing `output.json` means inference has not run. After adding images or
+rerunning inference, use **Refresh results** in the dashboard.
 
 To run only the required machine-readable inference:
 
 ```bash
-uv run aigc-predict images \
+uv run --no-sync aigc-predict images \
   --checkpoint artifacts/diverse_initialized_40k_calibrated.pt \
   --output output.json
 ```
@@ -49,10 +92,24 @@ The result is a JSON array with exactly the required fields:
 ```
 
 `pred` is the temperature-calibrated probability of AIGC in `[0, 1]`. It is a
-model estimate, not a provenance guarantee. On the first run, internet access
-is needed to download `openai/clip-vit-base-patch32` and ImageNet
-EfficientNet-B0 weights. Later runs can use the project-local `.hf-cache` and
-`.torch-cache` offline.
+model estimate, not a provenance guarantee. After setup, later runs reuse the
+project-local `.hf-cache` and `.torch-cache` without downloading weights again.
+
+### Setup troubleshooting
+
+- **`uv` is not found:** install it from the linked official uv documentation,
+  reopen the terminal, and confirm with `uv --version`.
+- **The checkpoint is missing:** confirm
+  `artifacts/diverse_initialized_40k_calibrated.pt` exists after cloning. It is
+  tracked directly by Git and does not require a separate model registry.
+- **A pretrained download fails:** verify access to `huggingface.co` and
+  `download.pytorch.org`, then rerun `scripts/download_pretrained_models.py`.
+  Partial downloads are safe to resume.
+- **Hugging Face warns about Windows symlinks:** inference still works. Enabling
+  Windows Developer Mode saves disk space but is not required.
+- **Running without internet:** complete the downloader once while online and
+  keep `.hf-cache/` and `.torch-cache/` in the project. Do not delete these
+  directories before the offline run.
 
 ## Technical approach
 
@@ -240,7 +297,8 @@ app.py                   # Streamlit result visualizer
 infer.sh                 # selected-model inference launcher
 images/.gitkeep          # preserves the empty demo input folder in Git
 scripts/                 # local dataset preparation and hardware utilities
-└── kaggle/              # Kaggle upload, extraction, training, and analysis
+├── download_pretrained_models.py  # fetches frozen inference backbones
+└── kaggle/                       # Kaggle upload, extraction, training, analysis
 tests/                   # unit and contract tests
 docs/EXPERIMENTAL_LOG.md # concise experiment decisions and limitations
 AGENTS.md                 # detailed append-only experiment/audit handoff
@@ -286,10 +344,15 @@ operating threshold and must not treat this score as proof.
 ## Verification
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
-.venv/bin/python -m compileall -q aigc_detector app.py scripts
+uv run --frozen python -m unittest tests.test_core tests.test_dashboard
+uv run --frozen python -m compileall -q aigc_detector app.py scripts
 bash -n infer.sh
 ```
+
+These production/core and dashboard checks are platform-independent. The full
+research suite can be run with `python -m unittest discover -s tests -v` on its
+intended POSIX/Kaggle environment; a few Phase 2/Phase 3 tests assume those
+paths and are not native-Windows checks.
 
 ## Limitations and future improvements
 

@@ -16,11 +16,11 @@ from transformers import AutoImageProcessor, CLIPVisionModelWithProjection
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def _project_hf_cache() -> str | None:
-    """Prefer weights downloaded into this workspace, especially in offline mode."""
+def _project_hf_cache() -> str:
+    """Use a stable project-local Hugging Face cache, creating it on first use."""
     cache = PROJECT_ROOT / ".hf-cache" / "hub"
-    model_cache = cache / "models--openai--clip-vit-base-patch32"
-    return str(cache) if model_cache.exists() else None
+    cache.mkdir(parents=True, exist_ok=True)
+    return str(cache)
 
 
 @dataclass
@@ -82,8 +82,8 @@ class FrozenEncoders(nn.Module):
         self.processor = AutoImageProcessor.from_pretrained(config.clip_model, cache_dir=cache_dir)
         self.clip = CLIPVisionModelWithProjection.from_pretrained(config.clip_model, cache_dir=cache_dir)
         project_torch_hub = PROJECT_ROOT / ".torch-cache" / "hub"
-        if project_torch_hub.exists():
-            torch.hub.set_dir(str(project_torch_hub))
+        project_torch_hub.mkdir(parents=True, exist_ok=True)
+        torch.hub.set_dir(str(project_torch_hub))
         self.forensic = efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
         self.forensic.classifier = nn.Identity()
         expected_dim = 2560 if config.forensic_mode == "laplacian_fft" else 1280
