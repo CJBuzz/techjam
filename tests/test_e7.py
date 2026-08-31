@@ -13,11 +13,14 @@ from aigc_detector.e7 import (
     SUPPORTED_BINS,
     DescriptorDataset,
     descriptor_cache_valid,
+    eligibility_summary,
     extract_descriptor_tasks,
     radial_bin_indices,
     radial_fft_descriptor,
+    rank_results,
     require_validation_selection,
     select_features,
+    select_eligible_winner,
 )
 from aigc_detector.model import FrozenEncoders
 
@@ -77,6 +80,41 @@ class E7Tests(unittest.TestCase):
         self.assertEqual(set(MODEL_MODES), set(expected))
         for mode, width in expected.items():
             self.assertEqual(select_features(fused, radial, mode).shape, (2, width))
+
+    def test_eligible_candidate_is_ranked_and_selected(self) -> None:
+        rows = [
+            {"model_mode": "radial_only", "radial_bins": 16, "status": "succeeded",
+             "clean_validation_balanced_accuracy": 0.96,
+             "mean_transformed_validation_balanced_accuracy": 0.80,
+             "worst_transformed_validation_balanced_accuracy": 0.70},
+            {"model_mode": "fused_radial", "radial_bins": 16, "status": "succeeded",
+             "clean_validation_balanced_accuracy": 0.97,
+             "mean_transformed_validation_balanced_accuracy": 0.90,
+             "worst_transformed_validation_balanced_accuracy": 0.85},
+        ]
+        ranked = rank_results(rows, baseline_clean=0.97)
+        winner = select_eligible_winner(ranked)
+        self.assertEqual(winner["model_mode"], "fused_radial")
+        self.assertEqual(winner["rank"], 1)
+
+    def test_all_clean_constraint_failures_are_valid_negative_result(self) -> None:
+        rows = [{"model_mode": "radial_only", "radial_bins": 16, "status": "succeeded",
+                 "clean_validation_balanced_accuracy": 0.90,
+                 "mean_transformed_validation_balanced_accuracy": 0.85,
+                 "worst_transformed_validation_balanced_accuracy": 0.80}]
+        ranked = rank_results(rows, baseline_clean=0.97)
+        summary = eligibility_summary(ranked, baseline_clean=0.97)
+        self.assertIsNone(select_eligible_winner(ranked))
+        self.assertIsNone(summary["eligible_winner"])
+        self.assertTrue(summary["no_eligible_candidate"])
+        self.assertIn("No succeeded E7 candidate", summary["reason"])
+
+    def test_failed_rows_do_not_trigger_empty_minimum(self) -> None:
+        rows = [{"model_mode": "clip_radial", "radial_bins": 64, "status": "failed",
+                 "failure_reason": "Input contains NaN"}]
+        ranked = rank_results(rows, baseline_clean=0.97)
+        self.assertIsNone(select_eligible_winner(ranked))
+        self.assertTrue(eligibility_summary(ranked, 0.97)["no_eligible_candidate"])
 
 
 if __name__ == "__main__":

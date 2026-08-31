@@ -332,6 +332,20 @@ def rank_results(rows, baseline_clean, split="validation"):
              "rank": ranks.get((row["model_mode"], row["radial_bins"]))} for row in rows]
 
 
+def select_eligible_winner(ranked: list[dict]) -> dict | None:
+    eligible = [row for row in ranked if row.get("rank") is not None]
+    return min(eligible, key=lambda row: row["rank"]) if eligible else None
+
+
+def eligibility_summary(ranked: list[dict], baseline_clean: float) -> dict:
+    winner = select_eligible_winner(ranked)
+    reason = None if winner else (
+        "No succeeded E7 candidate satisfied clean validation balanced accuracy >= "
+        f"baseline ({baseline_clean:.12g}) - 0.01."
+    )
+    return {"eligible_winner": winner, "no_eligible_candidate": winner is None, "reason": reason}
+
+
 def sweep_command(args):
     require_validation_selection("validation")
     base = torch.load(args.base_cache, map_location="cpu", weights_only=True, mmap=True)
@@ -374,9 +388,13 @@ def sweep_command(args):
             result_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
             rows.append(result)
     ranked = rank_results(rows, baseline_clean)
+    eligibility = eligibility_summary(ranked, baseline_clean)
+    winner = eligibility["eligible_winner"]
+    no_eligible_reason = eligibility["reason"]
     args.output_dir.mkdir(parents=True, exist_ok=True)
     (args.output_dir / "validation_summary.json").write_text(json.dumps({
         "selection_split": "validation", "baseline_clean_balanced_accuracy": baseline_clean,
+        **eligibility,
         "results": ranked,
     }, indent=2) + "\n", encoding="utf-8")
     scalar_keys = sorted({key for row in ranked for key, value in row.items() if not isinstance(value, (dict, list))})
@@ -397,12 +415,16 @@ def sweep_command(args):
                                       "mean_l2_distance": values[2], "std_l2_distance": values[3]})
     with (args.output_dir / "stability_by_scale.csv").open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(stability[0])); writer.writeheader(); writer.writerows(stability)
-    winner = min((row for row in ranked if row["rank"] is not None), key=lambda row: row["rank"])
-    (args.output_dir / "winning_config.json").write_text(json.dumps({
-        "schema_version": 1, "selection_split": "validation", "test_rows_used_for_selection": False,
-        "checkpoint": str(Path(winner["checkpoint"]).resolve()), "model_mode": winner["model_mode"],
-        "radial_bins": winner["radial_bins"], "seed": args.seed,
-    }, indent=2) + "\n", encoding="utf-8")
+    winning_path = args.output_dir / "winning_config.json"
+    if winner is None:
+        winning_path.unlink(missing_ok=True)
+        print(f"E7 completed with no eligible deployment candidate: {no_eligible_reason}")
+    else:
+        winning_path.write_text(json.dumps({
+            "schema_version": 1, "selection_split": "validation", "test_rows_used_for_selection": False,
+            "checkpoint": str(Path(winner["checkpoint"]).resolve()), "model_mode": winner["model_mode"],
+            "radial_bins": winner["radial_bins"], "seed": args.seed,
+        }, indent=2) + "\n", encoding="utf-8")
 
 
 def locked_test_command(args):
