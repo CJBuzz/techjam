@@ -4,6 +4,7 @@
 .uv-cache/
 .hf-cache/
 .torch-cache/
+.tools/
 
 # Python bytecode and tool caches
 __pycache__/
