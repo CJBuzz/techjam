@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
-from .data import (
+from ..data import (
     BALANCED_TRANSFORM_GROUPS,
     ROBUSTNESS_CONDITIONS,
     DeterministicTransform,
@@ -22,9 +22,9 @@ from .data import (
     stratified_train_val_test_split,
 )
 from .e4a import FEATURE_BLOCKS, assemble_validation_matrix, prepare_missing_validation_features
-from .metrics import classification_metrics, fit_temperature, select_threshold
-from .model import FrozenEncoders, ModelConfig, load_checkpoint
-from .train import choose_device
+from ..metrics import classification_metrics, fit_temperature, select_threshold
+from ..model import FrozenEncoders, ModelConfig, load_checkpoint
+from ..train import choose_device
 
 
 SUPPORTED_BINS = (16, 32, 64)
@@ -81,7 +81,10 @@ class DescriptorDataset(Dataset):
 
 
 def _descriptor_collate(batch):
-    return {bins: torch.stack([row[bins] for row in batch]) for bins in batch[0]}
+    # NumPy payloads are copied through the worker queue. Returning Torch
+    # storage here invokes multiprocessing's local resource-sharing socket,
+    # which is unavailable on some WSL/container filesystems.
+    return {bins: np.stack([row[bins].numpy() for row in batch]) for bins in batch[0]}
 
 
 def extract_descriptor_tasks(
@@ -95,7 +98,7 @@ def extract_descriptor_tasks(
     outputs = {count: [] for count in bins}
     for batch in loader:
         for count in bins:
-            outputs[count].append(batch[count])
+            outputs[count].append(torch.from_numpy(batch[count]))
     return {count: torch.cat(values) for count, values in outputs.items()}
 
 
@@ -441,7 +444,7 @@ def locked_test_command(args):
     head = nn.Linear(checkpoint["input_dim"], 1); head.load_state_dict(checkpoint["state_dict"]); head.eval()
     results = {}
     for index, condition in enumerate(ROBUSTNESS_CONDITIONS):
-        from .features import extract_condition_features
+        from ..features import extract_condition_features
         fused, labels, _, _ = extract_condition_features(
             test_rows, encoders, args.batch_size, (condition,), locked["seed"]
         )

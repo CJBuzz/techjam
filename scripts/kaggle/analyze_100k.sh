@@ -6,7 +6,7 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
   exit 2
 fi
 
-project_dir=$(cd "$(dirname "$0")/.." && pwd)
+project_dir=$(cd "$(dirname "$0")/../.." && pwd)
 data_root=$(cd "$1" && pwd)
 output_dir=${2:-/kaggle/working/aigc_100k}
 feature_batch_size=${FEATURE_BATCH_SIZE:-32}
@@ -30,7 +30,7 @@ python -m aigc_detector.calibrate \
   --output-report "$output_dir/mixed_100k_calibration.json" \
   --selection mixed --batch-size "$feature_batch_size" --seed 42 --device cuda
 
-python -m aigc_detector.shortcut_audit \
+python -m aigc_detector.analysis.shortcut_audit \
   --data-dir "$data_root" --split-manifest "$data_root/split_manifest.csv" \
   --feature-cache "$cache" --checkpoint "$calibrated" \
   --output "$output_dir/mixed_100k_shortcut_audit.json" --seed 42 --device cuda

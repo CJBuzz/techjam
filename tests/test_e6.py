@@ -7,7 +7,7 @@ import torch
 from PIL import Image
 
 from aigc_detector.data import RobustTransform
-from aigc_detector.e6 import (
+from aigc_detector.experiments.e6 import (
     ScaleTransform,
     add_scale_objective,
     require_validation_selection,

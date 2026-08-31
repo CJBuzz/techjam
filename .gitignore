@@ -25,7 +25,8 @@ dist/
 
 # Local datasets, trained models, and generated predictions
 data/
-artifacts/
+artifacts/*
+!artifacts/diverse_initialized_40k_calibrated.pt
 predictions.json
 output.json
 

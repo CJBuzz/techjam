@@ -17,14 +17,15 @@ dependencies = [
 
 [project.scripts]
 aigc-train = "aigc_detector.train:main"
-aigc-train-mixture = "aigc_detector.train_mixture:main"
+aigc-train-mixture = "aigc_detector.experiments.train_mixture:main"
 aigc-predict = "aigc_detector.predict:main"
 aigc-predict-ensemble = "aigc_detector.predict_ensemble:main"
 aigc-select-ensemble = "aigc_detector.ensemble:main"
 aigc-evaluate = "aigc_detector.evaluate:main"
 aigc-severity = "aigc_detector.severity:main"
 aigc-calibrate = "aigc_detector.calibrate:main"
-aigc-shortcut-audit = "aigc_detector.shortcut_audit:main"
+aigc-shortcut-audit = "aigc_detector.analysis.shortcut_audit:main"
+aigc-extract = "aigc_detector.extract:main"
 
 [tool.uv]
 package = true

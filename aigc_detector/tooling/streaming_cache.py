@@ -16,7 +16,7 @@ from typing import Callable, Iterable, Iterator
 import torch
 from PIL import Image
 
-from .data import BALANCED_TRANSFORM_GROUPS, DeterministicTransform, RobustTransform
+from ..data import BALANCED_TRANSFORM_GROUPS, DeterministicTransform, RobustTransform
 
 
 def _label(row: dict) -> int:
@@ -433,7 +433,7 @@ def main() -> None:
 
     from datasets import load_dataset
 
-    from .model import FrozenEncoders, ModelConfig
+    from ..model import FrozenEncoders, ModelConfig
 
     config = ModelConfig(forensic_mode="laplacian_fft", forensic_dim=2560)
     manifest_static = {

@@ -1,3 +1,5 @@
+"""Run calibrated directory inference and write the challenge JSON contract."""
+
 from __future__ import annotations
 
 import argparse
@@ -12,11 +14,13 @@ from .data import find_images
 from .model import FrozenEncoders, load_checkpoint
 from .train import choose_device
 
+DEFAULT_CHECKPOINT = Path("artifacts/diverse_initialized_40k_calibrated.pt")
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Write calibrated AIGC probabilities for an image directory")
     parser.add_argument("image_dir", type=Path)
-    parser.add_argument("--checkpoint", type=Path, default=Path("artifacts/hybrid_detector.pt"))
+    parser.add_argument("--checkpoint", type=Path, default=DEFAULT_CHECKPOINT)
     parser.add_argument("--output", type=Path, default=Path("predictions.json"))
     parser.add_argument("--batch-size", type=int, default=8)
     parser.add_argument("--device", choices=("auto", "cpu", "cuda", "mps"), default="auto")
@@ -36,6 +40,7 @@ def main() -> None:
     paths = find_images(args.image_dir)
     if not paths:
         raise ValueError(f"No supported images found in {args.image_dir}")
+    # Keep records in find_images() order for reproducible downstream review.
     records = []
     for start in tqdm(range(0, len(paths), args.batch_size), desc="predict"):
         batch_paths = []

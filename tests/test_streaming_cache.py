@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from PIL import Image
 
-from aigc_detector.streaming_cache import (
+from aigc_detector.tooling.streaming_cache import (
     bounded_stream_sample,
     audit_stream_cache_metadata,
     completed_cache_state,

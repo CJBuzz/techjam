@@ -1,3 +1,5 @@
+"""Evaluate locked checkpoints across clean and transformed image conditions."""
+
 from __future__ import annotations
 
 import argparse
@@ -187,7 +189,7 @@ def main() -> None:
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
     device = choose_device(args.device)
-    checkpoint_paths = args.checkpoints or [Path("artifacts/hybrid_detector.pt")]
+    checkpoint_paths = args.checkpoints or [Path("artifacts/diverse_initialized_40k_calibrated.pt")]
     models = []
     for checkpoint_path in checkpoint_paths:
         head, config, temperature, checkpoint_metadata = load_checkpoint(checkpoint_path, device)
@@ -196,7 +198,7 @@ def main() -> None:
     if args.response_model:
         if len(models) != 1:
             raise ValueError("--response-model requires exactly one base checkpoint")
-        from .response import load_response_checkpoint
+        from .analysis.response import load_response_checkpoint
 
         response_head, response_temperature, response_threshold, response_metadata = load_response_checkpoint(
             args.response_model, device
@@ -248,7 +250,7 @@ def main() -> None:
     metadata["conditions"] = list(conditions)
     for name in conditions:
         if response_head is not None:
-            from .response import extract_response_features
+            from .analysis.response import extract_response_features
 
             base_head, base_config, base_temperature = models[0][1], models[0][2], models[0][3]
             features, labels, paths = extract_response_features(

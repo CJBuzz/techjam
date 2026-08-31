@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from aigc_detector.e7 import (
+from aigc_detector.experiments.e7 import (
     MODEL_MODES,
     STABILITY_SCALES,
     SUPPORTED_BINS,

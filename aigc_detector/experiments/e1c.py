@@ -10,11 +10,11 @@ from typing import Callable
 import numpy as np
 import torch
 
-from .data import ROBUSTNESS_CONDITIONS
-from .features import extract_condition_tta_features
-from .metrics import classification_metrics, select_threshold
-from .model import FrozenEncoders, load_checkpoint
-from .train import choose_device
+from ..data import ROBUSTNESS_CONDITIONS
+from ..features import extract_condition_tta_features
+from ..metrics import classification_metrics, select_threshold
+from ..model import FrozenEncoders, load_checkpoint
+from ..train import choose_device
 
 
 COARSE_ALPHAS = tuple(round(index / 10, 2) for index in range(11))
@@ -230,7 +230,7 @@ def load_locked(path: Path) -> dict:
 
 
 def _split_rows(data_dir: Path, split: str, seed: int) -> list[tuple[Path, int]]:
-    from .data import load_labeled_paths, stratified_train_val_test_split
+    from ..data import load_labeled_paths, stratified_train_val_test_split
     rows = load_labeled_paths(data_dir)
     if split == "all":
         return rows

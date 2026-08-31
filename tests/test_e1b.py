@@ -5,7 +5,7 @@ from pathlib import Path
 
 import torch
 
-from aigc_detector.e1b import (
+from aigc_detector.experiments.e1b import (
     PairedFeatureStore,
     completed_result,
     contribution_statistics,

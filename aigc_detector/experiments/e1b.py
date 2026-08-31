@@ -15,11 +15,11 @@ import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .data import ROBUST_SELECTION_CONDITIONS
-from .metrics import classification_metrics, fit_temperature, select_threshold
-from .model import FusionHead, ModelConfig, load_checkpoint, save_checkpoint
-from .streaming_cache import load_stream_feature_cache
-from .train import choose_device
+from ..data import ROBUST_SELECTION_CONDITIONS
+from ..metrics import classification_metrics, fit_temperature, select_threshold
+from ..model import FusionHead, ModelConfig, load_checkpoint, save_checkpoint
+from ..tooling.streaming_cache import load_stream_feature_cache
+from ..train import choose_device
 
 
 DEFAULT_WEIGHTS = (0.00, 0.05, 0.10, 0.20, 0.35, 0.50, 0.75, 1.00)
@@ -384,7 +384,7 @@ def external_command(args: argparse.Namespace) -> None:
         external_summary = directory / "summary.json"
         if not external_summary.exists():
             subprocess.run([
-                sys.executable, "-m", "aigc_detector.evaluate_external",
+                sys.executable, "-m", "aigc_detector.analysis.evaluate_external",
                 "--data-dir", str(args.data_dir), "--checkpoint", row["checkpoint"],
                 "--output-dir", str(directory), "--batch-size", str(args.batch_size),
                 "--device", args.device,

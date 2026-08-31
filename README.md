@@ -1,510 +1,336 @@
-# Robust AIGC Detector
+# Robust AIGC Image Detector
 
-A lightweight multi-view detector for TikTok TechJam Track 5. The strongest version fuses a frozen CLIP ViT-B/32 semantic embedding with frozen EfficientNet-B0 features from both a reproducible Laplacian high-pass image and a centered log-magnitude FFT. Only a small MLP is trained. Disjoint model-selection and calibration splits are used for early stopping and post-hoc temperature calibration; the test split is reserved for one final evaluation.
+This repository is our Track 5 submission for detecting AI-generated images
+under common content transformations. The submitted model is
+`artifacts/diverse_initialized_40k_calibrated.pt`: a calibrated, 40K-initialized
+three-view detector that outputs an AIGC probability for every input image.
 
-The model stays far below the 2-billion-parameter limit and feature caching makes the initial frozen-encoder stage practical on modest hardware.
+The repository includes the complete feature-extraction, training, calibration,
+validation, test-inference, JSON-output, and dashboard path. The checkpoint has
+820,225 trainable head parameters; its frozen CLIP and EfficientNet backbones
+keep the complete system well below the challenge's 2-billion-parameter limit.
 
-## Cross-generator evaluation
+## Quick start
 
-The current mixed-5K results measure same-source held-out performance. They do not establish generalization to unseen image generators. The next experiment freezes the selected checkpoint and evaluates the untouched local test split followed by the B-Free FLUX/Stable Diffusion 3.5 external benchmark, without retraining or external threshold tuning.
-
-See [the cross-generator generalization protocol](docs/GENERALIZATION_PROTOCOL.md) for the verified research rationale, license/download notes, safe dataset preparation, paired-generator metrics, and the one-command Stage 1–2 evaluation workflow.
-
-## Robustness-first training
-
-The current training path can cover every challenge severity deterministically, keep clean/transformed pairs together, penalize prediction drift, and optimize the worst transformation group. Checkpoint selection uses clean loss plus the mean and worst losses on the hardest validation severities. The recommended starting point is:
-
-```bash
-uv run aigc-train \
-  --data-dir data/mixed_5k \
-  --output artifacts/robust_laplacian.pt \
-  --cache artifacts/robust_laplacian_features.pt \
-  --forensic-mode laplacian \
-  --augmentation-policy balanced --augmentation-repeats 6 \
-  --consistency-weight 0.05 --worst-group-weight 0.50 \
-  --robust-validation-weight 0.70 \
-  --feature-batch-size 16 --head-batch-size 64 \
-  --epochs 50 --patience 8 --device auto
-
-uv run aigc-train \
-  --data-dir data/mixed_5k \
-  --output artifacts/robust_laplacian_fft.pt \
-  --cache artifacts/robust_laplacian_fft_features.pt \
-  --forensic-mode laplacian_fft \
-  --initialize-from-laplacian artifacts/robust_laplacian.pt \
-  --augmentation-policy balanced --augmentation-repeats 6 \
-  --consistency-weight 0.05 --worst-group-weight 0.50 \
-  --robust-validation-weight 0.70 --learning-rate 1e-4 \
-  --feature-batch-size 16 --head-batch-size 64 \
-  --epochs 50 --patience 8 --device auto
-```
-
-The balanced policy includes every official JPEG, blur, resize, noise, color, and crop severity, plus a small set of composed redistribution transforms. Feature caches include an experiment manifest and are rejected when the dataset, split, encoder, or augmentation configuration changes.
-
-### Adaptive three-expert ensemble
-
-The experimental three-expert head combines complementary evidence:
-
-- a CLIP-only semantic expert intended to remain useful when pixel artifacts are damaged;
-- a CLIP + Laplacian expert for local edge and residual evidence;
-- a CLIP + FFT expert for frequency evidence;
-- a learned softmax gate, optionally conditioned on inexpensive image-quality statistics.
-
-Initialize it from the two robust checkpoints and train it against the same robustness-aware validation objective:
-
-```bash
-uv run aigc-train-mixture \
-  --data-dir data/mixed_5k \
-  --cache artifacts/robust_laplacian_fft_features.pt \
-  --laplacian-checkpoint artifacts/robust_laplacian.pt \
-  --fused-checkpoint artifacts/robust_laplacian_fft.pt \
-  --output artifacts/robust_three_expert.pt \
-  --experts three --gate-mode quality \
-  --gate-prior-weight 0.01 --robust-validation-weight 0.70 \
-  --learning-rate 5e-5 --epochs 40 --patience 8 --device auto
-```
-
-Treat this ensemble as a candidate until it beats the fused model on the untouched validation robustness matrix. Model selection must not use the test split.
-
-### Exact robustness and error analysis
-
-```bash
-uv run aigc-evaluate \
-  --data-dir data/mixed_5k \
-  --checkpoint artifacts/robust_laplacian_fft.pt \
-  --checkpoint artifacts/robust_three_expert.pt \
-  --split validation --profile full \
-  --output artifacts/validation_robustness.json \
-  --error-analysis-output artifacts/validation_errors.json \
-  --batch-size 16 --device auto
-```
-
-`--profile full` scores all 15 official non-clean severities independently. The report includes precision, recall, F1, specificity, false-positive/false-negative rates, confusion matrices, mean transformed accuracy, worst transformed accuracy, and the drop from clean accuracy. After selecting one final checkpoint, run the same command once with `--split test`.
-
-## Setup
+Requirements: Python 3.10–3.12, [`uv`](https://docs.astral.sh/uv/), and about
+2 GB of free space for pretrained encoder weights on first use.
 
 ```bash
 uv sync
-```
-
-## Web UI for Testing
-
-Once you have trained a model and saved it to the `artifacts/` directory, launch the interactive Streamlit web interface:
-
-```bash
+mkdir -p images
+# Copy JPG, PNG, WebP, BMP, or TIFF files into images/, then:
+./infer.sh
 uv run streamlit run app.py
 ```
 
-The UI provides a simple interface to:
-- **Upload an image** (JPG, PNG, WebP, etc.)
-- **Run inference** using all available trained models
-- **Ensemble predictions** from multiple models (if available)
-- **View results** with confidence scores and visualizations
-- **Understand predictions** with detailed model information
+Open <http://localhost:8501>. `infer.sh` uses the submitted checkpoint by
+default and writes `output.json`; the dashboard validates that file and renders
+each image on a human/real-to-AIGC probability spectrum.
 
-The UI automatically detects all `.pt` checkpoint files in the `artifacts/` directory and loads them on startup. If you have trained multiple models, it will offer to ensemble their predictions for more robust results.
-
-### Example workflow:
-1. Train a model: `uv run aigc-train --data-dir data/cifake_smoke --output artifacts/hybrid_detector.pt ...`
-2. Launch UI: `uv run streamlit run app.py`
-3. Open http://localhost:8501 in your browser
-4. Upload test images and see real-time predictions
-
-Training data must use this layout (folder aliases `fake`, `aigc`, and `authentic` are also accepted):
-
-```text
-data/my_dataset/
-├── ai/
-└── real/
-```
-
-Do not use the challenge's COCO val2017 / DALL-E Advanced demonstration set for training.
-
-### Local WildFake demonstration corpus
-
-`data/wildfake` is available locally only as an external-validation corpus. It contains COCO
-val2017 real images and DALL·E 3 Advanced synthetic images in the supplied WildFake hierarchy,
-not the detector's standard `real/` + `ai/` layout. Never add it to a training,
-model-selection, calibration, or persisted mixed-corpus split.
-
-Use [`scripts/evaluate_wildfake_external.py`](scripts/evaluate_wildfake_external.py) for a
-locked-checkpoint, clearly labelled stress check. The adapter writes an integrity manifest and
-refuses decoded-pixel duplicates; keep its reports separate from the reserved in-domain test and
-from official generator-held-out WildFake experiments.
-
-## 100-image smoke test
-
-Download 50 real and 50 AI-generated CIFAKE images, then train the frozen hybrid model:
+To run only the required machine-readable inference:
 
 ```bash
-uv run python scripts/download_cifake_smoke.py --per-class 50
-uv run aigc-train \
-  --data-dir data/cifake_smoke \
-  --output artifacts/hybrid_detector.pt \
-  --cache artifacts/cifake_smoke_features.pt \
-  --augmentation-repeats 2 \
-  --epochs 30
+uv run aigc-predict images \
+  --checkpoint artifacts/diverse_initialized_40k_calibrated.pt \
+  --output output.json
 ```
 
-The cache stores one clean and one randomly transformed feature row per training image. On Kaggle, prefer the balanced robustness-first configuration above and use a larger, source-diverse dataset. Caches are automatically checked against their experiment manifest.
-
-## Reproduced mixed 5K CPU run
-
-The verified local run uses 1,250 real and 1,250 synthetic images from each of
-CIFAKE and SID_Set. SID_Set's tampered class is excluded because this prototype
-targets fully generated images. Images are split independently within every
-class/source group: 3,496 train (70%), 752 validation (15%), and 752 test (15%).
-
-```bash
-uv run python scripts/download_mixed_5k.py --per-class-source 1250
-
-uv run aigc-train \
-  --data-dir data/mixed_5k \
-  --output artifacts/mixed_5k_detector.pt \
-  --cache artifacts/mixed_5k_features.pt \
-  --validation-fraction 0.15 --test-fraction 0.15 --seed 42 \
-  --augmentation-repeats 2 --feature-batch-size 16 \
-  --head-batch-size 64 --epochs 40 --patience 7 --device cpu
-
-uv run aigc-evaluate \
-  --data-dir data/mixed_5k \
-  --checkpoint artifacts/mixed_5k_detector.pt \
-  --output artifacts/mixed_5k_test_robustness.json \
-  --validation-fraction 0.15 --test-fraction 0.15 --seed 42 \
-  --batch-size 16 --device cpu
-```
-
-On the tested CPU, training plus feature extraction took 12m36s and deterministic
-test robustness evaluation took 7m47s. Test accuracy was 95.7% clean, 94.4% JPEG,
-89.6% blur, 89.5% resize, 92.0% noise, 94.8% color, and 91.9% crop. These are
-same-source held-out results, not proof of unseen-generator or cross-dataset
-generalization.
-
-## Improved Laplacian + FFT model
-
-The selected improvement uses three frozen views: CLIP, Laplacian, and FFT. The FFT view is the centered log-magnitude spectrum after mean removal and a Hann window, robustly scaled by its per-image 1st and 99th percentiles. Each augmented training copy composes between one and two distinct challenge transformations. The combined head is initialized from the strong Laplacian head: CLIP and Laplacian weights are copied, new FFT input weights start at zero, and the head is fine-tuned at `1e-4`. This initialization was important; training the three-view head from scratch was worse.
-
-Reproduce the selected model without scoring the test set during candidate training:
-
-```bash
-uv run aigc-train \
-  --data-dir data/mixed_5k \
-  --output artifacts/ablation_laplacian_composed.pt \
-  --cache artifacts/ablation_laplacian_composed_features.pt \
-  --forensic-mode laplacian \
-  --augmentation-repeats 3 --augmentation-depth 2 \
-  --modality-dropout 0.1 \
-  --validation-fraction 0.15 --test-fraction 0.15 --seed 42 \
-  --feature-batch-size 16 --head-batch-size 64 \
-  --epochs 40 --patience 7 --device cpu
-
-uv run aigc-train \
-  --data-dir data/mixed_5k \
-  --output artifacts/ablation_laplacian_fft_init_lr1e4.pt \
-  --cache artifacts/ablation_laplacian_fft_composed_features.pt \
-  --forensic-mode laplacian_fft \
-  --initialize-from-laplacian artifacts/ablation_laplacian_composed.pt \
-  --augmentation-repeats 3 --augmentation-depth 2 \
-  --learning-rate 1e-4 \
-  --validation-fraction 0.15 --test-fraction 0.15 --seed 42 \
-  --feature-batch-size 16 --head-batch-size 64 \
-  --epochs 40 --patience 7 --device cpu
-
-uv run aigc-evaluate \
-  --data-dir data/mixed_5k \
-  --checkpoint artifacts/ablation_laplacian_fft_init_lr1e4.pt \
-  --output artifacts/improved_laplacian_fft_test_robustness.json \
-  --split test --validation-fraction 0.15 --test-fraction 0.15 \
-  --seed 42 --batch-size 16 --device cpu
-```
-
-The combined feature extraction and head training took 20m57s on the tested CPU; the final seven-condition test evaluation took 8m47s. Compared with the original checkpoint, mean accuracy across clean/JPEG/blur/resize/noise/color/crop rose from 92.57% to 93.62%, and mean ROC-AUC from 97.84% to 98.33%.
-
-| Test condition | Original accuracy | Improved accuracy | Improved ROC-AUC |
-|---|---:|---:|---:|
-| Clean | 95.74% | 95.88% | 99.20% |
-| JPEG | 94.41% | 94.28% | 98.80% |
-| Blur | 89.63% | 93.09% | 97.96% |
-| Resize/upscale | 89.49% | 92.29% | 97.34% |
-| Noise | 92.02% | 92.42% | 97.45% |
-| Color jitter | 94.81% | 94.95% | 98.86% |
-| Crop | 91.89% | 92.42% | 98.69% |
-
-These remain same-source held-out results. The next scientifically important test is a generator- or source-held-out dataset.
-
-## Required JSON inference
-
-```bash
-uv run aigc-predict path/to/images \
-  --checkpoint artifacts/ablation_laplacian_fft_init_lr1e4.pt \
-  --output predictions.json
-```
-
-The output is a JSON array of records with exactly `image_path` and calibrated AIGC probability `pred` fields.
-
-A compatible two-checkpoint ensemble can be selected on named external
-development datasets with `aigc-select-ensemble` and served with
-`aigc-predict-ensemble`. See `docs/ENSEMBLE_SELECTION.md`. Development datasets
-used to choose its weights or threshold must not subsequently be reported as
-untouched final tests.
-
-## Quick classification demo
-
-Use the cached untouched test features to show several correct examples from each
-class and report precision, recall, F1, accuracy, specificity, ROC-AUC, average
-precision, the confusion matrix, and the full per-class report:
-
-```bash
-uv run python scripts/demo_classification.py --examples-per-class 3
-```
-
-The examples are illustrative; every reported metric is calculated over all 752
-clean test images, not only the displayed correct predictions.
-
-## Robustness evaluation
-
-```bash
-uv run aigc-evaluate \
-  --data-dir path/to/held_out_data \
-  --checkpoint artifacts/hybrid_detector.pt \
-  --output artifacts/robustness.json
-```
-
-The evaluator recreates the source-stratified 70/15/15 split and defaults to only
-the untouched test originals. Use `--split validation` while comparing candidates,
-then `--split test` once for the selected model. Repeat `--checkpoint` to compare
-multiple checkpoints with the same encoder configuration while extracting each
-transformed feature only once. Its JSON contains aggregate and per-source metrics
-for every exact severity, plus a robustness summary. Keep the split fractions and
-seed identical to training. Earlier seven-condition results in this README used one
-sampled severity per transformation family and should not be compared directly with
-the new full-severity report.
-The model automatically discovers weights in this workspace's `.hf-cache` and
-`.torch-cache`, so `HF_HUB_OFFLINE=1` works after the initial download. On a new
-machine, omit the offline flag for the first run so the pretrained weights can be
-downloaded.
-
-For a final report, use a held-out dataset/generator and report clean plus individual JPEG, blur, resizing, noise, color, and crop settings. The smoke subset only proves that the software path works; its metrics are not scientifically meaningful.
-
-For a completely separate source or generator dataset, pass `--split all`; this
-evaluates every labeled image without recreating an internal train/validation/test
-split.
-
-## Kaggle recommendations
-
-### Local RTX 4090 workflow (Windows)
-
-The local project lock deliberately selects CPU-only PyTorch for portability. Do not run
-`uv sync` for a CUDA environment. On a Windows machine with an RTX 4090, install `uv`, then use
-the dedicated bootstrap script to create an isolated CUDA environment:
-
-```powershell
-winget install --id=astral-sh.uv -e
-PowerShell -ExecutionPolicy Bypass -File scripts\setup_4090.ps1
-PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Stage Preflight
-```
-
-The staged runner defaults to the recommended 100K corpus. Preparation downloads 25K images for
-each SID/CIFAKE class-source cell, excludes SID label 2, deduplicates before assigning duplicate-
-atomic splits, stores lossless PNGs to avoid adding a common JPEG signature, and writes a
-reproducible manifest. Its bounded streaming shuffle prevents high-resolution SID rows from
-exhausting RAM, while per-source preparation journals allow an interrupted download to resume.
-Run each long stage separately so failures are
-easy to resume and inspect:
-
-```powershell
-PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Prepare
-PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Extract
-PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Train
-PowerShell -ExecutionPolicy Bypass -File scripts\run_scale_4090.ps1 -Scale 100k -Stage Analyze
-```
-
-Use `-FeatureBatchSize 16` if another application occupies substantial VRAM. A clean 24 GiB 4090
-should normally start at 32. The head is small and normally supports `-HeadBatchSize 256`.
-For a deadline-oriented run, `-Scale 40k` uses 10K images per class-source cell. After the 100K
-run completes comfortably, repeat with `-Scale 200k`; it uses 50K images per class-source cell.
-`-Stage All` is available, but separate stages are recommended for the first run.
-
-Extraction includes train, model-selection, calibration, and robust model-selection features but
-deliberately excludes reserved-test features. Training and analysis therefore cannot accidentally
-inspect the reserved test set. Do not run the final test or B-Free evaluation until the checkpoint,
-calibration choice, threshold, and augmentation policy are locked.
-
-### Audited 100K GPU handoff
-
-The reproducible route is to upload the already prepared `data/mixed_100k` directory once as a
-private Kaggle Dataset. This preserves the exact duplicate groups and the train/model-selection/
-calibration/reserved-test assignments instead of generating a different random sample in the
-notebook.
-
-On this machine, authenticate with a token from Kaggle's API settings, validate the corpus, and
-upload it (replace the handle with your Kaggle username and a new dataset slug):
-
-```bash
-uv run --with kagglehub python scripts/kaggle_dataset.py upload \
-  --handle YOUR_USERNAME/aigc-mixed-100k \
-  --data-dir data/mixed_100k \
-  --dry-run
-uv run --with kagglehub python scripts/kaggle_dataset.py upload \
-  --handle YOUR_USERNAME/aigc-mixed-100k \
-  --data-dir data/mixed_100k \
-  --login
-```
-
-`--with kagglehub` installs KaggleHub only for that `uv run`; it does not add it to this project's
-dependencies. `--login` is intentionally part of the upload command: KaggleHub's interactive login
-is process-local, so logging in with one `uv run` and uploading with another loses the credential.
-The uploader calls `whoami()` and verifies that `YOUR_USERNAME` owns the requested handle before it
-starts transferring files. As a persistent alternative, place a generated API token in
-`~/.kaggle/access_token` or set `KAGGLE_API_TOKEN`, then omit `--login`.
-
-Upload the repository itself as a second, small private Kaggle Dataset. The helper excludes data,
-artifacts, model caches, `.venv`, Git history, logs, and common credential files:
-
-```bash
-uv run --with kagglehub python scripts/kaggle_repo.py \
-  --handle YOUR_USERNAME/techjam-source \
-  --dry-run
-uv run --with kagglehub python scripts/kaggle_repo.py \
-  --handle YOUR_USERNAME/techjam-source \
-  --login
-```
-
-Verify in Kaggle that **both** Datasets are Private. In a new Kaggle notebook, select a GPU, turn
-Internet on for the initial model download, and add `techjam-source` and `aigc-mixed-100k` through
-the notebook's **Add Input** panel. Kaggle inputs are read-only, so copy only the small source
-Dataset to the writable working directory:
-
-```bash
-find /kaggle/input -maxdepth 4 -type f \
-  \( -name pyproject.toml -o -name split_manifest.csv \) -print
-
-SOURCE_FILE=$(find /kaggle/input -maxdepth 4 -type f -name pyproject.toml -print -quit)
-SOURCE_ROOT=$(dirname "$SOURCE_FILE")
-mkdir -p /kaggle/working/techjam
-cp -a "$SOURCE_ROOT"/. /kaggle/working/techjam/
-cd /kaggle/working/techjam
-python -m pip install -q -e . --no-deps
-
-DATA_FILE=$(find /kaggle/input -maxdepth 4 -type f -name split_manifest.csv -print -quit)
-DATA_ROOT=$(dirname "$DATA_FILE")
-python scripts/kaggle_dataset.py validate --data-dir "$DATA_ROOT"
-```
-
-The Kaggle image already includes CUDA-enabled PyTorch and the common scientific dependencies.
-Using `pip --no-deps` here is intentional: this repository's local `uv` configuration pins the CPU
-PyTorch index, so running `uv sync` in Kaggle could replace its CUDA build. If an import is missing,
-install only that package rather than reinstalling `torch` or `torchvision`.
-
-Kaggle P100 sessions may currently start with a CUDA 12.8 PyTorch wheel that omits Pascal `sm_60`
-kernels. If `torch.cuda.get_arch_list()` does not include `sm_60`, install the official CUDA 12.6
-build before importing the detector, then verify a real CUDA operation:
-
-```bash
-python -m pip install -q --no-cache-dir --force-reinstall \
-  torch==2.10.0 torchvision==0.25.0 \
-  --index-url https://download.pytorch.org/whl/cu126
-python -c 'import torch; x=torch.ones(1, device="cuda"); print(torch.__version__, torch.cuda.get_arch_list(), x)'
-```
-
-The last line printed is `DATA_ROOT=...`. Use that exact path without copying the images into
-`/kaggle/working`, for example:
-
-```bash
-bash scripts/kaggle_run_100k.sh \
-  "$DATA_ROOT" \
-  /kaggle/working/aigc_100k
-```
-
-If KaggleHub returns a versioned cache path instead of `/kaggle/input/aigc-mixed-100k`, pass the
-printed `DATA_ROOT` value. `FEATURE_BATCH_SIZE=16` can be used if 32 exhausts GPU memory. The runner
-extracts three balanced training views plus clean model-selection and calibration features, trains
-the Laplacian initializer, then trains the paired-consistency Laplacian+FFT head. It deliberately
-does not extract or score the reserved test split. Save a notebook version when finished so the
-feature caches and checkpoints under `/kaggle/working/aigc_100k` become reusable notebook output.
-
-After the baseline runner completes, run the prepared analyses sequentially on the same GPU:
-
-```bash
-bash scripts/kaggle_analyze_100k.sh \
-  "$DATA_ROOT" \
-  /kaggle/working/aigc_100k
-```
-
-This performs three model-selection-safe tasks without reading reserved test images:
-
-- fits both clean-only and deterministic mixed-condition temperatures on the separate 4,987-image
-  calibration split, preselects mixed calibration, and records high-recall/high-precision
-  thresholds;
-- verifies exact hashes and near-duplicate groups remain split-atomic, trains linear source probes
-  for CLIP/Laplacian/FFT/fused features, reports detector metrics by source and native resolution,
-  and records representative false positives/negatives with nearest-training-image dHash distance;
-- evaluates all 16 explicit challenge cells: clean, four JPEG qualities, three blur sigmas, two
-  resize scales, three noise sigmas, two color magnitudes, and the 80% center crop.
-
-The severity output is saved after every cell and `--resume` skips completed cells, so a Kaggle
-session can safely be continued. The full severity matrix processes 159,600 model-selection views;
-the mixed calibration pass adds 4,987 transformed views. This is inference-only but is still a
-substantial GPU job. The shortcut audit reuses the baseline feature cache and is comparatively
-cheap. Preserve these additional output artifacts:
-
-```text
-mixed_100k_balanced_consistency_w01_mixed_calibrated.pt
-mixed_100k_calibration.json
-mixed_100k_shortcut_audit.json
-mixed_100k_model_selection_severity.json
-```
-
-Do not invoke `aigc-severity --split test --allow-test` until preprocessing, calibration, thresholds,
-and every candidate comparison have been locked.
-
-WildFake is not substituted automatically. Its official release is on ModelScope, not as a
-verified first-party Kaggle Dataset, and it is distributed in multi-gigabyte generator archives.
-The smallest useful multi-generator experiment also needs a new generator-held-out manifest;
-mixing an unofficial mirror into this fixed split would weaken both licensing and leakage checks.
-Use the audited CIFAKE+SID 100K run first. Treat an official WildFake import as a separate
-experiment, preserve its official hierarchy CSVs, and never use the challenge's demonstration-only
-COCO/DALL-E subset for training.
-
-- Enable a GPU. The encoders automatically use CUDA; only the fusion head is optimized.
-- Use generator/source-separated training and validation data. Never split transformed copies of one original across splits.
-- Prefer SID_Set or a mixture of properly licensed sources at realistic resolution. CIFAKE is only 32×32 and has severe source shortcuts, so it is unsuitable as the sole final dataset.
-- Cache 4-8 feature variants per training image using `--augmentation-repeats`; the first is clean and the rest receive one or more challenge-style transforms. Start with `--augmentation-depth 2` rather than stacking every transform at once.
-- Compare CLIP-only, forensic-only, and fused features before claiming a hybrid gain.
-
-## Limitations and future work
-
-Frozen ImageNet EfficientNet was not pretrained specifically on Laplacian or FFT inputs, and high-frequency evidence remains vulnerable to redistribution. CLIP can learn content or dataset bias. Temperature calibration cannot repair domain shift. A stronger version should fine-tune the last EfficientNet block on a diverse high-resolution corpus, measure per-generator generalization, tune thresholds for moderation costs, and include representative false-positive/false-negative analysis.
-## Directory prediction
-
-Put images for the dashboard in `images/`, then run:
-
-```bash
-./infer.sh
-```
-
-This uses `artifacts/robust_laplacian_fft.pt` by default and writes `output.json`.
-The dashboard reads that JSON and loads the referenced images; it does not run
-model inference itself. Arguments can override the defaults:
-
-```bash
-./infer.sh path/to/images artifacts/model.pt output.json
-```
-
-The equivalent direct command is:
-
-```bash
-uv run python scripts/predict_directory.py path/to/images \
-  --checkpoint artifacts/model.pt \
-  --output predictions.json
-```
-
-The output is a JSON array containing one record per readable image:
+The result is a JSON array with exactly the required fields:
 
 ```json
 [
-  {"image_path": "path/to/images/example.jpg", "pred": 0.9374}
+  {"image_path": "images/example.jpg", "pred": 0.9374}
 ]
 ```
 
-`pred` is the calibrated likelihood that the image is AIGC-generated.
+`pred` is the temperature-calibrated probability of AIGC in `[0, 1]`. It is a
+model estimate, not a provenance guarantee. On the first run, internet access
+is needed to download `openai/clip-vit-base-patch32` and ImageNet
+EfficientNet-B0 weights. Later runs can use the project-local `.hf-cache` and
+`.torch-cache` offline.
+
+## Technical approach
+
+The detector combines three complementary frozen representations:
+
+1. **Semantic view — CLIP ViT-B/32 (512 features).** Captures image-level
+   concepts and composition that survive compression or resampling.
+2. **Local forensic view — EfficientNet-B0 on a Laplacian image (1,280
+   features).** The RGB image is resized to 224×224, converted to grayscale,
+   filtered with a fixed 3×3 Laplacian, scaled by its per-image 99th percentile,
+   and ImageNet-normalized.
+3. **Frequency forensic view — EfficientNet-B0 on an FFT image (1,280
+   features).** The grayscale mean is removed, a 2D Hann window is applied, and
+   the centered `log1p(abs(FFT))` spectrum is robustly scaled between its
+   per-image 1st and 99th percentiles.
+
+The normalized 3,072-dimensional representation feeds a small MLP. Only this
+fusion head is trained. Feature caching makes repeated head experiments cheap
+and guarantees that preprocessing used for training is identical to inference.
+
+### Robust training and selection
+
+- Original images are assigned to deterministic, duplicate-group-atomic
+  train/model-selection/calibration/test splits before augmentation.
+- Every training original has one clean view and two deterministic balanced
+  transformed views spanning JPEG, blur, resize, noise, color, crop, and useful
+  two-step compositions.
+- A paired-logit consistency penalty (`0.1`) discourages predictions from
+  changing across views of the same image.
+- The final fusion head starts from the selected 40K head. This retains its
+  strong CLIP+Laplacian+FFT solution while adapting on the more diverse corpus;
+  modality dropout `0.1` and FFT-block dropout `0.15` reduce dependence on a
+  single stream.
+- Early stopping and model comparison use only the model-selection split.
+  Temperature (`0.6637356`) and the balanced operating threshold (`0.7572185`)
+  are then fitted once on the separate clean/transformed calibration split.
+- Reserved-test images are excluded from feature extraction during model
+  development. The exact-severity test command requires an explicit
+  `--allow-test` acknowledgement.
+
+Checkpoint metadata records 47,994 training originals, 9,988 model-selection
+originals, 2,000 calibration originals, 6,000 reserved-test originals, and
+143,982 training feature rows. The checkpoint is 3.2 MB; pretrained frozen
+backbones are downloaded separately.
+
+The 40K initializer used balanced CIFAKE and SID_Set real/synthetic classes
+(SID's tampered class was excluded). The adapted checkpoint names its source
+manifest as `data/mixed_wildfake_66k/split_manifest.csv`, but that manifest is
+not present in this checkout. Consequently, its exact additional dataset
+composition and exclusion of the challenge's demonstration-only images cannot
+yet be independently audited here; see **Pre-submission blockers** below.
+
+## Results and honest scope
+
+On the separate 2,000-image calibration split, the selected temperature reached
+96.8% clean accuracy and 95.75% accuracy across the combined clean/transformed
+calibration set at threshold 0.5 (ROC-AUC 0.9935 for the combined set). These
+numbers are calibration diagnostics, not final-test evidence.
+
+The compact exact-transformation summary below uses mixed-condition calibration
+and the neutral 0.5 probability threshold. Each transformed calibration image
+is assigned to one exact challenge severity; family rows macro-average those
+cells.
+
+| Calibration condition | Accuracy | ROC-AUC |
+|---|---:|---:|
+| Clean | 96.80% | 99.67% |
+| JPEG (Q90/Q70/Q50/Q30) | 96.83% | 99.49% |
+| Gaussian blur (σ 0.5/1.0/2.0) | 94.49% | 99.00% |
+| Resize (0.5×/0.25× then upscale) | 90.23% | 97.20% |
+| Gaussian noise (σ 0.02/0.05/0.10) | 94.74% | 99.21% |
+| Color (0.8×/1.2×) | 93.98% | 98.86% |
+| Center crop (80%) | 96.99% | 99.01% |
+| All transformed calibration images | 94.70% | 98.96% |
+
+As an external demonstration-only stress check, the locked checkpoint scored
+1,000 supplied WildFake images (500 COCO-val2017 real and 500 DALL·E 3 Advanced
+synthetic) at threshold 0.5:
+
+| Metric | Result |
+|---|---:|
+| Accuracy / balanced accuracy | 86.00% |
+| ROC-AUC | 93.59% |
+| Average precision | 94.73% |
+| Precision / recall / F1 | 85.02% / 87.40% / 86.19% |
+| Confusion matrix (TN / FP / FN / TP) | 423 / 77 / 63 / 437 |
+
+The external evaluation command does not fit weights, calibration, or a
+threshold on this set. It is a useful end-to-end stress check, but it contains
+only one real source and one synthetic generator and therefore does not prove
+broad unseen-generator generalization. Because the selected checkpoint's
+training manifest is currently missing, this checkout cannot certify zero
+image overlap with its adapted training corpus. The evidence trail and rejected
+approaches are in [`docs/EXPERIMENTAL_LOG.md`](docs/EXPERIMENTAL_LOG.md).
+
+## Reproducing the submitted pipeline
+
+Training data uses an audited CSV split manifest with `path`, `label`, and
+`split` information. The image root can contain source-specific subdirectories;
+the manifest is authoritative. Do not use the challenge's supplied
+COCO-val2017/DALL·E Advanced demonstration corpus for training.
+
+### 1. Extract frozen features
+
+```bash
+uv run aigc-extract \
+  --data-dir data/mixed_wildfake_66k \
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv \
+  --combined-output artifacts/mixed_wildfake_66k/laplacian_fft_features.pt \
+  --laplacian-output artifacts/mixed_wildfake_66k/laplacian_features.pt \
+  --augmentation-repeats 3 --batch-size 32 --seed 42 --device auto
+```
+
+This stage writes train, model-selection, calibration, and robust
+model-selection features. Its cache explicitly records
+`test_features_extracted: false`.
+
+### 2. Train from the locked 40K initializer
+
+```bash
+uv run aigc-train \
+  --data-dir data/mixed_wildfake_66k \
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv \
+  --cache artifacts/mixed_wildfake_66k/laplacian_fft_features.pt \
+  --output artifacts/mixed_wildfake_66k/diverse_initialized_40k.pt \
+  --forensic-mode laplacian_fft \
+  --initialize-from-checkpoint artifacts/mixed_40k_balanced_consistency_w01_calibrated.pt \
+  --augmentation-policy balanced --augmentation-repeats 3 \
+  --consistency-weight 0.1 --modality-dropout 0.1 --fft-dropout 0.15 \
+  --robust-validation-weight 0.7 --learning-rate 1e-4 \
+  --head-batch-size 256 --epochs 50 --patience 8 --seed 42 --device auto
+```
+
+### 3. Fit calibration on the separate calibration split
+
+```bash
+uv run aigc-calibrate \
+  --data-dir data/mixed_wildfake_66k \
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv \
+  --checkpoint artifacts/mixed_wildfake_66k/diverse_initialized_40k.pt \
+  --feature-cache artifacts/mixed_wildfake_66k/laplacian_fft_features.pt \
+  --output-checkpoint artifacts/diverse_initialized_40k_calibrated.pt \
+  --output-report artifacts/mixed_wildfake_66k/calibration.json \
+  --selection mixed --seed 42 --device auto
+```
+
+### 4. Validate, then perform one locked test
+
+```bash
+# Candidate/diagnostic evaluation: safe to repeat.
+uv run aigc-severity \
+  --data-dir data/mixed_wildfake_66k \
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv \
+  --checkpoint artifacts/diverse_initialized_40k_calibrated.pt \
+  --output artifacts/model_selection_severity.json \
+  --split model_selection --device auto
+
+# Run once only after the checkpoint and threshold are frozen.
+uv run aigc-severity \
+  --data-dir data/mixed_wildfake_66k \
+  --split-manifest data/mixed_wildfake_66k/split_manifest.csv \
+  --checkpoint artifacts/diverse_initialized_40k_calibrated.pt \
+  --output artifacts/final_test_severity.json \
+  --split test --allow-test --device auto
+```
+
+## Repository structure
+
+```text
+aigc_detector/
+├── data.py              # split loading and deterministic transformations
+├── model.py             # frozen encoders, forensic views, and fusion head
+├── features.py          # batched feature extraction
+├── extract.py           # leakage-safe cache CLI
+├── train.py             # robust head training and checkpoint selection
+├── calibrate.py         # separate-split temperature/threshold calibration
+├── evaluate.py          # robustness and external evaluation
+├── severity.py          # exact challenge condition matrix
+├── predict.py           # required calibrated JSON inference
+├── dashboard.py         # testable dashboard data contract
+├── analysis/            # optional audits and external/response evaluation
+├── tooling/             # streamed-cache support for data preparation
+└── experiments/         # ablations and mixture training, not submission runtime
+app.py                   # Streamlit result visualizer
+infer.sh                 # selected-model inference launcher
+images/.gitkeep          # preserves the empty demo input folder in Git
+scripts/                 # local dataset preparation and hardware utilities
+└── kaggle/              # Kaggle upload, extraction, training, and analysis
+tests/                   # unit and contract tests
+docs/EXPERIMENTAL_LOG.md # concise experiment decisions and limitations
+AGENTS.md                 # detailed append-only experiment/audit handoff
+```
+
+Production code is documented at the point where non-obvious preprocessing,
+leakage controls, calibration, or checkpoint compatibility is enforced.
+Experimental `e*` modules are intentionally isolated from the submission path.
+The `.gitkeep` file is intentionally empty: Git does not track directories, so
+it ensures `images/` exists immediately after cloning.
+
+## Error analysis and trade-offs
+
+On the 1,000-image external demonstration check, the model produced 77 false
+positives among COCO real images and 63 false negatives among DALL·E images.
+The dashboard intentionally presents a continuous probability rather than a
+definitive provenance label: lowering the threshold catches more AIGC but
+increases false accusations; raising it protects authentic images but misses
+more synthetic content. The calibrated operating threshold (`0.7572`) targets
+balanced calibration performance, while the external table retains `0.5` so
+probability quality is visible without hiding threshold effects.
+
+The external evaluator records the five highest-confidence false positives and
+false negatives for qualitative review without using those labels for tuning.
+Extreme resize and blur remain the clearest quantitative weak points: both
+suppress local/frequency evidence, while semantics alone cannot establish
+provenance. Moderation use should therefore keep a human-review band around the
+operating threshold and must not treat this score as proof.
+
+## Notable explorations we did not select
+
+- Training Laplacian+FFT fusion from scratch improved blur but became brittle to
+  noise. Zero-initializing the new FFT columns from a strong Laplacian solution
+  was consistently better.
+- A learned Laplacian/FFT expert gate discovered image-source identity more
+  strongly than corruption severity and underperformed the simple fused head.
+- A three-expert semantic/Laplacian/FFT ensemble helped a few severe conditions
+  but was weaker on the mean robustness objective.
+- A provisional 100K checkpoint was strong on shared-source diagnostics, but
+  overlap with the 40K evaluation rows could not be ruled out without its
+  original manifest, so that comparison was not treated as held-out evidence.
+
+## Verification
+
+```bash
+.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m compileall -q aigc_detector app.py scripts
+bash -n infer.sh
+```
+
+## Limitations and future improvements
+
+- Build a properly licensed generator- and real-source-disjoint WildFake split;
+  random same-source splits cannot establish unseen-generator performance.
+- Compare global resize with validation-only texture-crop aggregation for
+  eligible high-resolution images, retaining global resize for small images.
+- Investigate fine-tuning only the final EfficientNet block after a frozen
+  generator-held-out baseline justifies the added compute.
+- Expand error review by generator, source, resolution, subject matter, and
+  exact transformation before setting moderation policies.
+
+## Team contributions
+
+This summary follows the Git history; team members should verify the wording
+before the final Devpost submission.
+
+| Team member | Repository contribution |
+|---|---|
+| CJ | Core detector, robustness training, Kaggle workflow, and external evaluation |
+| Xuan Shan | Scaled 40K/100K training, GPU handoff, benchmarking, and documentation |
+| Kia-Lok | Phase-two/phase-three research experiments and validation tooling |
+| jxinnan | FFT experiments and early detector implementation |
+| origami100 | Dashboard/inference workflow and evaluation reporting |
+
+## Submission checklist
+
+- Working inference produces the exact `image_path` / `pred` JSON contract.
+- The dashboard visualizes that JSON and the corresponding images end to end.
+- The selected checkpoint is visible to Git and all required code is present;
+  both still need to be committed and pushed to the public repository.
+- Code is separated into production and experimental paths and comments explain
+  the non-obvious technical decisions.
+- This README documents setup, architecture, reproduction, results, limitations,
+  and repository structure.
+- The Devpost submission still needs the written project description and public
+  three-minute YouTube demo video required by the event-level deliverables.
+
+### Pre-submission blockers
+
+1. Recover the exact `mixed_wildfake_66k` split manifest and dataset provenance.
+   Compare decoded-pixel hashes against all 13,841 supplied COCO-val2017/DALL·E
+   Advanced images. If any demonstration image entered train, model-selection,
+   or calibration, this checkpoint is not challenge-compliant and must not be
+   submitted.
+2. Commit and push `artifacts/diverse_initialized_40k_calibrated.pt`, the
+   dashboard, reorganized package, tests, lockfile, and documentation.
+3. Verify the contribution table with every team member, then add the public
+   repository and three-minute YouTube links to Devpost.

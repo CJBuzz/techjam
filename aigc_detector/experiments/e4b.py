@@ -14,11 +14,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
 
-from .data import ROBUSTNESS_CONDITIONS
+from ..data import ROBUSTNESS_CONDITIONS
 from .e4a import FEATURE_BLOCKS, assemble_validation_matrix, prepare_missing_validation_features
-from .metrics import classification_metrics, fit_temperature, select_threshold
-from .model import ModelConfig, load_checkpoint
-from .train import choose_device
+from ..metrics import classification_metrics, fit_temperature, select_threshold
+from ..model import ModelConfig, load_checkpoint
+from ..train import choose_device
 
 
 QUALITY_FEATURE_NAMES = (
@@ -356,9 +356,9 @@ def locked_test_command(args: argparse.Namespace) -> None:
     model, temperature, threshold, metadata = load_adaptive_checkpoint(args.model, torch.device("cpu"))
     if metadata.get("selection_split") != "validation" or metadata.get("test_rows_used_for_selection") is not False:
         raise ValueError("E4b checkpoint is not a validation-locked candidate")
-    from .data import load_labeled_paths, stratified_train_val_test_split
-    from .features import extract_condition_features, extract_features
-    from .model import FrozenEncoders
+    from ..data import load_labeled_paths, stratified_train_val_test_split
+    from ..features import extract_condition_features, extract_features
+    from ..model import FrozenEncoders
     rows = load_labeled_paths(args.data_dir)
     _, _, test_rows = stratified_train_val_test_split(rows, args.data_dir, 0.15, 0.15, args.seed)
     device = choose_device(args.device)

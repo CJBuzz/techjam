@@ -68,7 +68,7 @@ def upload(args: argparse.Namespace) -> None:
         import kagglehub
     except ImportError as error:
         raise RuntimeError(
-            "Run with: uv run --with kagglehub python scripts/kaggle_dataset.py ..."
+            "Run with: uv run --with kagglehub python scripts/kaggle/dataset.py ..."
         ) from error
     if args.login:
         kagglehub.login()
@@ -104,7 +104,7 @@ def download(args: argparse.Namespace) -> None:
         import kagglehub
     except ImportError as error:
         raise RuntimeError(
-            "Run with: uv run --with kagglehub python scripts/kaggle_dataset.py ..."
+            "Run with: uv run --with kagglehub python scripts/kaggle/dataset.py ..."
         ) from error
     kwargs: dict[str, object] = {"force_download": args.force}
     if args.output_dir:

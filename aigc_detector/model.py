@@ -1,3 +1,5 @@
+"""Frozen semantic/forensic encoders, fusion heads, and checkpoint I/O."""
+
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass

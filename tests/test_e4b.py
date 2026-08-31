@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 
-from aigc_detector.e4b import (
+from aigc_detector.experiments.e4b import (
     AdaptiveFusionHead,
     GATE_MODES,
     QUALITY_FEATURE_NAMES,

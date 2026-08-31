@@ -68,7 +68,7 @@ def main() -> None:
         import kagglehub
     except ImportError as error:
         raise RuntimeError(
-            "Run with: uv run --with kagglehub python scripts/kaggle_repo.py ..."
+            "Run with: uv run --with kagglehub python scripts/kaggle/repository.py ..."
         ) from error
     if args.login:
         kagglehub.login()

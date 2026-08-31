@@ -5,8 +5,8 @@ from pathlib import Path
 
 import torch
 
-from aigc_detector.e4b import AdaptiveFusionHead
-from aigc_detector.e4c import (
+from aigc_detector.experiments.e4b import AdaptiveFusionHead
+from aigc_detector.experiments.e4c import (
     INTERVENTION_MODES,
     INTERVENTION_WEIGHTS,
     add_deltas,

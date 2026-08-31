@@ -96,9 +96,9 @@ def main() -> None:
 
     import torch
 
-    from .data import IMAGE_SUFFIXES, load_labeled_paths
-    from .features import extract_features
-    from .model import FrozenEncoders, load_checkpoint
+    from ..data import IMAGE_SUFFIXES, load_labeled_paths
+    from ..features import extract_features
+    from ..model import FrozenEncoders, load_checkpoint
 
     if not args.checkpoint.is_file():
         raise FileNotFoundError(args.checkpoint)

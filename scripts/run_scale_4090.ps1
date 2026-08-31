@@ -83,7 +83,7 @@ function Assert-PreparedData {
     if (-not (Test-Path -LiteralPath $manifest) -or -not (Test-Path -LiteralPath $audit)) {
         throw "Prepared $Scale corpus is missing. Run with -Stage Prepare first."
     }
-    Invoke-Python scripts/kaggle_dataset.py validate --data-dir $dataRoot
+    Invoke-Python scripts/kaggle/dataset.py validate --data-dir $dataRoot
 }
 
 function Prepare-Data {
@@ -153,7 +153,7 @@ function Analyze-Model {
             --output-report (Join-Path $artifactRoot "calibration.json") `
             --selection mixed --batch-size $FeatureBatchSize --seed $Seed --device cuda
     }
-    Invoke-Python -m aigc_detector.shortcut_audit `
+    Invoke-Python -m aigc_detector.analysis.shortcut_audit `
         --data-dir $dataRoot --split-manifest $manifest `
         --feature-cache $combinedCache --checkpoint $calibratedCheckpoint `
         --output (Join-Path $artifactRoot "shortcut_audit.json") --seed $Seed --device cuda

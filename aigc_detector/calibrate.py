@@ -1,3 +1,5 @@
+"""Fit temperature and operating thresholds on the reserved calibration split."""
+
 from __future__ import annotations
 
 import argparse
@@ -46,6 +48,7 @@ def main() -> None:
     device = choose_device(args.device)
     head, config, old_temperature, metadata = load_checkpoint(args.checkpoint, device)
     cache = torch.load(args.feature_cache, map_location="cpu", weights_only=True)
+    # Calibration never reuses model-selection or test rows.
     clean_features = cache.get("calibration_features")
     clean_labels = cache.get("calibration_labels")
     if clean_features is None or clean_labels is None:
@@ -59,6 +62,7 @@ def main() -> None:
     if not torch.equal(clean_labels, torch.tensor([label for _, label in calibration_rows], dtype=torch.float32)):
         raise ValueError("Calibration cache labels do not align with manifest order")
 
+    # Assign exact severities evenly so one corruption family cannot dominate.
     transformed_specs = [spec for spec in SEVERITY_SPECS if spec[0] != "clean"]
     assignments = [transformed_specs[index % len(transformed_specs)] for index in range(len(calibration_rows))]
     transformed_features, transformed_labels, _ = extract_features_with_factory(

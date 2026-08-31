@@ -12,8 +12,8 @@ import numpy as np
 import torch
 from PIL import Image
 
-from .data import DeterministicTransform, ROBUSTNESS_CONDITIONS, RobustTransform
-from .metrics import classification_metrics
+from ..data import DeterministicTransform, ROBUSTNESS_CONDITIONS, RobustTransform
+from ..metrics import classification_metrics
 
 
 ATOMIC_VIEWS = ("identity", "jpeg90", "resize0.75", "resize0.5", "blur0.5")
@@ -256,7 +256,7 @@ def load_locked_policy(path: Path) -> dict:
 
 
 def _load_rows(data_dir: Path, split: str, seed: int) -> list[tuple[Path, int]]:
-    from .data import load_labeled_paths, stratified_train_val_test_split
+    from ..data import load_labeled_paths, stratified_train_val_test_split
     all_rows = load_labeled_paths(data_dir)
     _, validation, test = stratified_train_val_test_split(all_rows, data_dir, 0.15, 0.15, seed)
     return validation if split == "validation" else test
@@ -264,8 +264,8 @@ def _load_rows(data_dir: Path, split: str, seed: int) -> list[tuple[Path, int]]:
 
 def search_command(args: argparse.Namespace) -> None:
     require_validation_search("validation")
-    from .model import FrozenEncoders, load_checkpoint
-    from .train import choose_device
+    from ..model import FrozenEncoders, load_checkpoint
+    from ..train import choose_device
     device = choose_device(args.device)
     head, config, temperature, metadata = load_checkpoint(args.checkpoint, device)
     rows = _load_rows(args.data_dir, "validation", args.seed)
@@ -296,8 +296,8 @@ def search_command(args: argparse.Namespace) -> None:
 
 def locked_test_command(args: argparse.Namespace) -> None:
     locked = load_locked_policy(args.locked_policy)
-    from .model import FrozenEncoders, load_checkpoint
-    from .train import choose_device
+    from ..model import FrozenEncoders, load_checkpoint
+    from ..train import choose_device
     checkpoint = Path(locked["checkpoint"])
     device = choose_device(args.device)
     head, config, temperature, metadata = load_checkpoint(checkpoint, device)

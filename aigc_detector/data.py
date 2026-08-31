@@ -1,3 +1,5 @@
+"""Dataset discovery, leakage-safe splitting, and deterministic robustness transforms."""
+
 from __future__ import annotations
 
 import io

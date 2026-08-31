@@ -12,10 +12,10 @@ import torch
 from PIL import Image
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
-from .data import DeterministicTransform, ROBUSTNESS_CONDITIONS, test_time_views
-from .metrics import select_threshold
-from .model import FrozenEncoders, image_quality_statistics, load_checkpoint
-from .train import choose_device
+from ..data import DeterministicTransform, ROBUSTNESS_CONDITIONS, test_time_views
+from ..metrics import select_threshold
+from ..model import FrozenEncoders, image_quality_statistics, load_checkpoint
+from ..train import choose_device
 
 
 QUALITY_FEATURE_NAMES = (
@@ -252,7 +252,7 @@ def extract_observations(
 
 
 def _rows(data_dir: Path, split: str, seed: int):
-    from .data import load_labeled_paths, stratified_train_val_test_split
+    from ..data import load_labeled_paths, stratified_train_val_test_split
     rows = load_labeled_paths(data_dir)
     _, validation, test = stratified_train_val_test_split(rows, data_dir, 0.15, 0.15, seed)
     return validation if split == "validation" else test

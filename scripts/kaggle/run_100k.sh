@@ -6,7 +6,7 @@ if [[ $# -lt 1 || $# -gt 2 ]]; then
   exit 2
 fi
 
-project_dir=$(cd "$(dirname "$0")/.." && pwd)
+project_dir=$(cd "$(dirname "$0")/../.." && pwd)
 data_root=$(cd "$1" && pwd)
 output_dir=${2:-/kaggle/working/aigc_100k}
 feature_batch_size=${FEATURE_BATCH_SIZE:-32}
@@ -15,7 +15,7 @@ head_batch_size=${HEAD_BATCH_SIZE:-256}
 mkdir -p "$output_dir"
 cd "$project_dir"
 python -c 'import torch; assert torch.cuda.is_available(), "Kaggle GPU is not enabled"; x = torch.ones(1, device="cuda"); print(torch.__version__, torch.cuda.get_device_name(0), torch.cuda.get_arch_list(), x.item())'
-python "$project_dir/scripts/kaggle_dataset.py" validate --data-dir "$data_root"
+python "$project_dir/scripts/kaggle/dataset.py" validate --data-dir "$data_root"
 
 combined_cache="$output_dir/mixed_100k_laplacian_fft_features.pt"
 laplacian_cache="$output_dir/mixed_100k_laplacian_features.pt"

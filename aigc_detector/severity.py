@@ -1,3 +1,5 @@
+"""Score every exact challenge severity with resumable, split-safe reporting."""
+
 from __future__ import annotations
 
 import argparse
@@ -51,6 +53,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true", help="Skip cells already present in the output JSON")
     parser.add_argument("--only", action="append", default=[], help="Optional exact cell key; repeat to run a subset")
     args = parser.parse_args()
+    # Test access is deliberately noisy: selection must finish before this flag is used.
     if args.split == "test" and not args.allow_test:
         raise ValueError("Reserved test evaluation requires --allow-test after the full pipeline is locked")
     random.seed(args.seed)

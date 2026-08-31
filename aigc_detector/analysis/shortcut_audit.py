@@ -11,9 +11,9 @@ import torch
 from sklearn.linear_model import SGDClassifier
 from sklearn.metrics import accuracy_score, balanced_accuracy_score, roc_auc_score
 
-from .metrics import classification_metrics, expected_calibration_error
-from .model import load_checkpoint
-from .train import choose_device
+from ..metrics import classification_metrics, expected_calibration_error
+from ..model import load_checkpoint
+from ..train import choose_device
 
 
 def _records(manifest: Path) -> dict[str, list[dict[str, str]]]:

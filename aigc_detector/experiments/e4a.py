@@ -12,8 +12,8 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 
-from .data import ROBUSTNESS_CONDITIONS
-from .metrics import classification_metrics, fit_temperature, select_threshold
+from ..data import ROBUSTNESS_CONDITIONS
+from ..metrics import classification_metrics, fit_temperature, select_threshold
 
 
 FEATURE_BLOCKS = OrderedDict((
@@ -103,10 +103,10 @@ def prepare_missing_validation_features(
     if not missing:
         return {"features": torch.empty(0, 3072), "labels": torch.empty(0), "conditions": [], "manifest": manifest}
 
-    from .data import load_labeled_paths, stratified_train_val_test_split
-    from .features import extract_condition_features
-    from .model import FrozenEncoders, ModelConfig
-    from .train import choose_device
+    from ..data import load_labeled_paths, stratified_train_val_test_split
+    from ..features import extract_condition_features
+    from ..model import FrozenEncoders, ModelConfig
+    from ..train import choose_device
 
     source_manifest = base_cache["manifest"]
     config_values = source_manifest["model_config"]
@@ -309,7 +309,7 @@ def main() -> None:
         base, args.base_cache, args.validation_cache, args.data_dir, args.device, args.feature_batch_size
     )
     robust_x, robust_y, robust_conditions = assemble_validation_matrix(base, extra)
-    from .train import choose_device
+    from ..train import choose_device
     device = choose_device(args.device)
     clean_val_x, clean_val_y = validation_selection_tensors(base)
     rows = [train_subset(

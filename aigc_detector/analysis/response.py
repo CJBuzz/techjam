@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, TensorDataset
 
-from .data import BALANCED_TRANSFORM_GROUPS, DeterministicTransform, ROBUST_SELECTION_CONDITIONS
+from ..data import BALANCED_TRANSFORM_GROUPS, DeterministicTransform, ROBUST_SELECTION_CONDITIONS
 
 PROBE_CONDITIONS = ("clean", "jpeg_q90", "blur_s0.5", "resize_x0.5")
 RESPONSE_FEATURE_DIM = 20
@@ -151,9 +151,9 @@ def _fingerprint(rows: list[tuple[Path, int]], root: Path) -> str:
 def extract_command(args: argparse.Namespace) -> None:
     from dataclasses import asdict
 
-    from .data import load_labeled_paths, stratified_train_val_test_split
-    from .model import FrozenEncoders, load_checkpoint
-    from .train import choose_device
+    from ..data import load_labeled_paths, stratified_train_val_test_split
+    from ..model import FrozenEncoders, load_checkpoint
+    from ..train import choose_device
 
     random.seed(args.seed)
     np.random.seed(args.seed)
@@ -223,7 +223,7 @@ def extract_command(args: argparse.Namespace) -> None:
 
 
 def train_command(args: argparse.Namespace) -> None:
-    from .metrics import classification_metrics, fit_temperature, select_threshold
+    from ..metrics import classification_metrics, fit_temperature, select_threshold
 
     random.seed(args.seed)
     np.random.seed(args.seed)

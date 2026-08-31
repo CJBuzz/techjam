@@ -9,10 +9,10 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
-from .data import load_labeled_paths, stratified_train_val_test_split
-from .metrics import classification_metrics, fit_temperature, select_threshold
-from .features import extract_balanced_quality_statistics, extract_condition_quality_statistics
-from .model import (
+from ..data import load_labeled_paths, stratified_train_val_test_split
+from ..metrics import classification_metrics, fit_temperature, select_threshold
+from ..features import extract_balanced_quality_statistics, extract_condition_quality_statistics
+from ..model import (
     AdaptiveTriExpertHead,
     ExpertMixtureHead,
     ModelConfig,
@@ -20,7 +20,7 @@ from .model import (
     load_checkpoint,
     save_checkpoint,
 )
-from .train import _dataset_fingerprint, choose_device
+from ..train import _dataset_fingerprint, choose_device
 
 
 def _copy_experts(

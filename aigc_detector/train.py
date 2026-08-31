@@ -1,3 +1,5 @@
+"""Train and validation-select the small fusion head over frozen feature caches."""
+
 from __future__ import annotations
 
 import argparse
@@ -64,7 +66,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the frozen two-stream AIGC detector")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing real/ and ai/ folders")
     parser.add_argument("--split-manifest", type=Path, default=None, help="Persisted duplicate-aware split manifest")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/hybrid_detector.pt"))
+    parser.add_argument("--output", type=Path, default=Path("artifacts/trained_detector.pt"))
     parser.add_argument("--cache", type=Path, default=None, help="Optional feature cache (.pt)")
     parser.add_argument(
         "--diverse-cache", type=Path, default=None,
@@ -303,7 +305,7 @@ def main() -> None:
             raise ValueError("--diverse-cache requires --augmentation-policy balanced")
         if train_groups is None or train_original_indices is None:
             raise ValueError("Local balanced cache is missing group/pair metadata")
-        from .streaming_cache import load_stream_feature_cache
+        from .tooling.streaming_cache import load_stream_feature_cache
 
         diverse_x, diverse_y, diverse_groups, _, diverse_originals, diverse_manifest = load_stream_feature_cache(
             args.diverse_cache, asdict(config)

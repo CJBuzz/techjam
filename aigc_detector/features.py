@@ -1,3 +1,5 @@
+"""Batched feature extraction for clean, augmented, and exact-severity views."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -29,6 +31,7 @@ def extract_features(
     transform_mode: str | None = None,
     augmentation_depth: int = 1,
 ) -> tuple[torch.Tensor, torch.Tensor, list[str]]:
+    """Extract one or more cached rows per original while preserving row order."""
     all_features: list[torch.Tensor] = []
     all_labels: list[torch.Tensor] = []
     all_paths: list[str] = []
