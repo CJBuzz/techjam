@@ -15,7 +15,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Run the frozen-checkpoint in-domain test and B-Free unseen-generator evaluation"
     )
-    parser.add_argument("--checkpoint", type=Path, default=Path("artifacts/robust_laplacian_fft.pt"))
+    parser.add_argument(
+        "--checkpoint", type=Path, default=Path("artifacts/diverse_initialized_40k_calibrated.pt")
+    )
     parser.add_argument("--local-data", type=Path, default=Path("data/mixed_5k"))
     parser.add_argument("--external-data", type=Path, default=Path("data/bfree_new_generators"))
     parser.add_argument("--output-dir", type=Path, default=Path("artifacts/generalization"))

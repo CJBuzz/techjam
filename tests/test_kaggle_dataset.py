@@ -12,9 +12,9 @@ from PIL import Image
 
 from aigc_detector.data import load_labeled_paths
 from aigc_detector.model import ModelConfig
-from scripts.kaggle_dataset import locate_dataset_root, validate_dataset_root
+from scripts.kaggle.dataset import locate_dataset_root, validate_dataset_root
 from scripts.extract_scale_features import save_cache
-from aigc_detector.shortcut_audit import _leakage_report
+from aigc_detector.analysis.shortcut_audit import _leakage_report
 from aigc_detector.train import build_cache_manifest
 
 

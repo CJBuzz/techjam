@@ -1,3 +1,5 @@
+"""Score every exact challenge severity with resumable, split-safe reporting."""
+
 from __future__ import annotations
 
 import argparse
@@ -22,6 +24,7 @@ def _source(path: str, root: Path) -> str:
 
 def _summary(cells: dict[str, dict[str, object]]) -> dict[str, object]:
     metrics = [cell["overall"] for cell in cells.values()]
+    # Macro averages weight every severity cell equally, independent of source count.
     names = ("accuracy", "roc_auc", "average_precision", "brier", "ece")
     macro = {name: float(np.mean([row[name] for row in metrics])) for name in names}
     return {
@@ -51,6 +54,7 @@ def main() -> None:
     parser.add_argument("--resume", action="store_true", help="Skip cells already present in the output JSON")
     parser.add_argument("--only", action="append", default=[], help="Optional exact cell key; repeat to run a subset")
     args = parser.parse_args()
+    # Test access is deliberately noisy: selection must finish before this flag is used.
     if args.split == "test" and not args.allow_test:
         raise ValueError("Reserved test evaluation requires --allow-test after the full pipeline is locked")
     random.seed(args.seed)
@@ -61,6 +65,7 @@ def main() -> None:
     threshold = float(metadata.get("threshold", 0.5))
     encoders = FrozenEncoders(config, device)
     rows = load_split_manifest(args.data_dir, args.split_manifest)[args.split]
+    # --only supports bounded reruns without changing the canonical severity definitions.
     selected = [(operation, value) for operation, value in SEVERITY_SPECS if not args.only or severity_key(operation, value) in args.only]
     known = {severity_key(operation, value) for operation, value in SEVERITY_SPECS}
     unknown = set(args.only) - known
@@ -82,6 +87,7 @@ def main() -> None:
         "cells": {},
     }
     if args.resume and args.output.is_file():
+        # Resume only when checkpoint and split identity match the partial report.
         prior = json.loads(args.output.read_text(encoding="utf-8"))
         if prior.get("_metadata", {}).get("checkpoint") != str(args.checkpoint) or prior.get("_metadata", {}).get("split") != args.split:
             raise ValueError("Resume output checkpoint/split does not match this run")
@@ -102,6 +108,7 @@ def main() -> None:
         with torch.no_grad():
             probabilities = torch.sigmoid(head(features.to(device)) / temperature).cpu()
         sources = [_source(path, args.data_dir) for path in paths]
+        # Use the checkpoint's frozen temperature and threshold for every cell.
         overall = classification_metrics(labels, probabilities, threshold)
         overall["ece"] = expected_calibration_error(labels, probabilities)
         by_source = {}
@@ -117,6 +124,7 @@ def main() -> None:
             "by_source": by_source,
         }
         results["summary"] = _summary(cells)
+        # Persist after each cell so multi-hour CPU evaluations are resumable.
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(results, indent=2) + "\n", encoding="utf-8")
         print(json.dumps({key: cells[key], "running_summary": results["summary"]}, indent=2))

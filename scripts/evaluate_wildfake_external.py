@@ -103,6 +103,18 @@ def main() -> None:
         "dalle3_advanced_fake": classification_metrics(labels[~sources], probabilities[~sources]),
     }
     labels_bool = labels.bool()
+    # Keep a small qualitative error set without using external labels to alter
+    # the checkpoint, its calibration, or its frozen operating threshold.
+    false_positives = [
+        {"image_path": path, "pred": float(probability)}
+        for path, probability, truth, prediction in zip(paths, probabilities, labels_bool, predictions)
+        if not bool(truth) and bool(prediction)
+    ]
+    false_negatives = [
+        {"image_path": path, "pred": float(probability)}
+        for path, probability, truth, prediction in zip(paths, probabilities, labels_bool, predictions)
+        if bool(truth) and not bool(prediction)
+    ]
     report = {
         "scope": "External labelled stress check only; not used for training, selection, calibration, or threshold tuning.",
         "checkpoint": str(args.checkpoint), "checkpoint_metadata": checkpoint_metadata,
@@ -121,6 +133,11 @@ def main() -> None:
             "median_ai_probability": float(probabilities.median()),
             "real_mean_ai_probability": float(probabilities[sources].mean()),
             "fake_mean_ai_probability": float(probabilities[~sources].mean()),
+        },
+        "representative_errors": {
+            "false_positives": sorted(false_positives, key=lambda row: row["pred"], reverse=True)[:5],
+            "false_negatives": sorted(false_negatives, key=lambda row: row["pred"])[:5],
+            "selection_rule": "highest-confidence mistakes at the frozen 0.5 threshold",
         },
     }
     args.output.parent.mkdir(parents=True, exist_ok=True)

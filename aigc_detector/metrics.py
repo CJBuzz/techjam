@@ -19,7 +19,9 @@ def classification_metrics(
 ) -> dict[str, float | int | list[list[int]]]:
     y = labels.detach().cpu().numpy().astype(int)
     p = probabilities.detach().cpu().numpy()
+    # Threshold metrics and ranking/calibration metrics intentionally share one report.
     predictions = (p >= threshold).astype(int)
+    # Force a 2x2 matrix even when one predicted class is absent.
     tn, fp, fn, tp = confusion_matrix(y, predictions, labels=[0, 1]).ravel()
     specificity = float(tn / (tn + fp)) if tn + fp else float("nan")
     sensitivity = float(tp / (tp + fn)) if fn + tp else float("nan")
@@ -46,6 +48,7 @@ def select_threshold(labels: torch.Tensor, probabilities: torch.Tensor, objectiv
     y = labels.detach().cpu().numpy().astype(int)
     p = probabilities.detach().cpu().numpy()
     candidates = np.unique(np.concatenate(([0.0, 0.5, 1.0], p)))
+    # Predictions change only at observed probabilities, so this search is exact.
     best_threshold, best_score = 0.5, -1.0
     for threshold in candidates:
         predictions = (p >= threshold).astype(int)
@@ -58,6 +61,7 @@ def select_threshold(labels: torch.Tensor, probabilities: torch.Tensor, objectiv
             score = (specificity + sensitivity) / 2
         else:
             raise ValueError(f"Unknown threshold objective {objective!r}")
+        # Prefer the least disruptive threshold when validation scores tie.
         if score > best_score or (score == best_score and abs(threshold - 0.5) < abs(best_threshold - 0.5)):
             best_threshold, best_score = float(threshold), float(score)
     return best_threshold
@@ -66,6 +70,7 @@ def select_threshold(labels: torch.Tensor, probabilities: torch.Tensor, objectiv
 def fit_temperature(logits: torch.Tensor, labels: torch.Tensor) -> float:
     """Positive scalar temperature optimized on a held-out validation split."""
     log_temperature = torch.zeros(1, requires_grad=True)
+    # Optimize in log space so temperature remains positive throughout LBFGS.
     optimizer = torch.optim.LBFGS([log_temperature], lr=0.1, max_iter=100)
 
     def closure() -> torch.Tensor:
@@ -92,6 +97,7 @@ def expected_calibration_error(
     for index in range(bins):
         mask = (p >= edges[index]) & (p < edges[index + 1])
         if index == bins - 1:
+            # Include probability 1.0 in the final otherwise half-open bin.
             mask |= p == 1.0
         if mask.any():
             error += float(mask.sum()) / total * abs(float(p[mask].mean()) - float(y[mask].mean()))
@@ -110,6 +116,7 @@ def operational_thresholds(
     y = labels.detach().cpu().numpy().astype(bool)
     p = probabilities.detach().cpu().numpy()
     candidates = np.unique(np.concatenate(([0.0], p, [1.0])))
+    # Enumerate every distinct operating point available on calibration data.
     rows = []
     for threshold in candidates:
         predicted = p >= threshold
@@ -121,6 +128,7 @@ def operational_thresholds(
         rows.append((float(threshold), precision, recall))
     recall_rows = [row for row in rows if row[2] >= recall_target]
     precision_rows = [row for row in rows if row[1] >= precision_target]
+    # High-recall chooses the strictest feasible cutoff; high-precision maximizes recall.
     high_recall = max(recall_rows, key=lambda row: (row[0], row[1]))
     high_precision = max(precision_rows, key=lambda row: (row[2], -row[0]))
     return {

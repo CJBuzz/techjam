@@ -7,7 +7,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from aigc_detector.e2b import (
+from aigc_detector.experiments.e2b import (
     AGGREGATIONS,
     ATOMIC_VIEWS,
     POLICIES,

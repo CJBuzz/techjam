@@ -1,3 +1,5 @@
+"""Train and validation-select the small fusion head over frozen feature caches."""
+
 from __future__ import annotations
 
 import argparse
@@ -35,6 +37,7 @@ def merge_balanced_feature_sets(
     """Merge paired local and streamed features while preserving repeat-major pairing."""
     local_repeats = len(local_y) // local_originals
     diverse_repeats = len(diverse_y) // diverse_originals
+    # Both sources must contribute the same complete view count per original.
     if local_repeats != diverse_repeats:
         raise ValueError(
             f"Local cache has {local_repeats} paired views, diverse cache has {diverse_repeats}"
@@ -56,6 +59,7 @@ def merge_balanced_feature_sets(
         )
     ]
     total_originals = local_originals + diverse_originals
+    # Rebuild identities after concatenation so unrelated sources never pair.
     original_indices = torch.arange(total_originals).repeat(local_repeats)
     return merged_x, merged_y, merged_groups, original_indices, total_originals
 
@@ -64,7 +68,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train the frozen two-stream AIGC detector")
     parser.add_argument("--data-dir", type=Path, required=True, help="Directory containing real/ and ai/ folders")
     parser.add_argument("--split-manifest", type=Path, default=None, help="Persisted duplicate-aware split manifest")
-    parser.add_argument("--output", type=Path, default=Path("artifacts/hybrid_detector.pt"))
+    parser.add_argument("--output", type=Path, default=Path("artifacts/trained_detector.pt"))
     parser.add_argument("--cache", type=Path, default=None, help="Optional feature cache (.pt)")
     parser.add_argument(
         "--diverse-cache", type=Path, default=None,
@@ -153,6 +157,7 @@ def _dataset_fingerprint(rows: list[tuple[Path, int]], root: Path) -> str:
 def build_cache_manifest(args: argparse.Namespace, config: ModelConfig, rows: list[tuple[Path, int]]) -> dict:
     split_manifest_hash = None
     if args.split_manifest:
+        # Bind caches to the exact persisted split, not only the dataset directory.
         split_manifest_hash = hashlib.sha256(args.split_manifest.read_bytes()).hexdigest()
     return {
         "schema_version": 2,
@@ -180,6 +185,7 @@ def main() -> None:
     rows = load_labeled_paths(args.data_dir)
     calibration_rows: list[tuple[Path, int]] = []
     if args.split_manifest:
+        # Four-way manifests keep checkpoint selection and calibration independent.
         manifest_splits = load_split_manifest(args.data_dir, args.split_manifest)
         train_rows, val_rows, calibration_rows, test_rows = (
             manifest_splits["train"],
@@ -208,6 +214,7 @@ def main() -> None:
 
     expected_manifest = build_cache_manifest(args, config, rows)
     if args.cache and args.cache.exists():
+        # Refuse reuse if data, split, encoder, or augmentation settings changed.
         cached = torch.load(args.cache, map_location="cpu", weights_only=True)
         if cached.get("manifest") != expected_manifest:
             raise ValueError(
@@ -233,6 +240,7 @@ def main() -> None:
             )
         print(f"Loaded feature cache: {args.cache}")
     else:
+        # Encoder extraction is expensive; head experiments should reuse this cache.
         encoders = FrozenEncoders(config, device)
         if args.augmentation_policy == "balanced":
             train_x, train_y, _, train_groups, train_original_indices = extract_balanced_features(
@@ -259,6 +267,7 @@ def main() -> None:
         if args.report_test_metrics:
             test_x, test_y, _ = extract_features(test_rows, encoders, args.feature_batch_size)
         if args.cache:
+            # Test tensors are omitted unless the caller explicitly opens that split.
             args.cache.parent.mkdir(parents=True, exist_ok=True)
             torch.save(
                 {
@@ -303,11 +312,12 @@ def main() -> None:
             raise ValueError("--diverse-cache requires --augmentation-policy balanced")
         if train_groups is None or train_original_indices is None:
             raise ValueError("Local balanced cache is missing group/pair metadata")
-        from .streaming_cache import load_stream_feature_cache
+        from .tooling.streaming_cache import load_stream_feature_cache
 
         diverse_x, diverse_y, diverse_groups, _, diverse_originals, diverse_manifest = load_stream_feature_cache(
             args.diverse_cache, asdict(config)
         )
+        # Extend the original-ID namespace while preserving complete paired groups.
         train_x, train_y, train_groups, train_original_indices, training_original_count = (
             merge_balanced_feature_sets(
                 train_x, train_y, train_groups, len(train_rows),
@@ -335,6 +345,7 @@ def main() -> None:
             raise ValueError("Initialization checkpoint must use the compatible Laplacian encoder")
         source_state = source_head.state_dict()
         target_state = head.state_dict()
+        # Copy CLIP+Laplacian weights and introduce FFT as a zero-valued residual.
         for key, source_value in source_state.items():
             if key == "network.0.weight":
                 target_state[key].zero_()
@@ -349,6 +360,7 @@ def main() -> None:
         if train_groups is None or train_original_indices is None:
             raise ValueError("Balanced feature cache is missing group/pair metadata")
         repeats = len(train_y) // training_original_count
+        # Sample originals first; each minibatch then gathers every paired view.
         if repeats * training_original_count != len(train_y):
             raise ValueError("Balanced feature rows must contain complete repeats of every original")
         original_loader = DataLoader(torch.arange(training_original_count), batch_size=args.head_batch_size, shuffle=True)
@@ -374,12 +386,14 @@ def main() -> None:
             else:
                 features, labels = batch
             if args.modality_dropout > 0:
+                # Mask whole modalities so the head learns meaningful fallback cues.
                 features = features.clone()
                 drop_clip = torch.rand(len(features)) < (args.modality_dropout / 2)
                 drop_forensic = (~drop_clip) & (torch.rand(len(features)) < (args.modality_dropout / 2))
                 features[drop_clip, : config.clip_dim] = 0
                 features[drop_forensic, config.clip_dim :] = 0
             if args.fft_dropout > 0:
+                # FFT has its own dropout because it was added as a residual block.
                 fft_start = config.clip_dim + 1280
                 drop_fft = torch.rand(len(features)) < args.fft_dropout
                 features[drop_fft, fft_start:] = 0
@@ -390,9 +404,11 @@ def main() -> None:
             )
             loss = losses.mean()
             if args.consistency_weight > 0:
+                # Paired corruptions should agree in logit space, not raw feature space.
                 paired_logits = batch_logits.view(repeats, -1)
                 loss = loss + args.consistency_weight * ((paired_logits - paired_logits.mean(0)) ** 2).mean()
             if args.worst_group_weight > 0:
+                # Optional minimax pressure targets the hardest group in this batch.
                 group_losses = []
                 for group in group_names:
                     mask = torch.tensor([value == group for value in batch_groups], device=device)
@@ -407,6 +423,7 @@ def main() -> None:
             clean_val_loss = criterion(val_logits, val_y_device)
             robust_mean_loss = robust_worst_loss = clean_val_loss
             if robust_val_x_device is not None and robust_val_y_device is not None:
+                # Balance average robustness against the single hardest condition.
                 robust_logits = head(robust_val_x_device)
                 condition_size = len(val_rows)
                 condition_losses = torch.stack([
@@ -429,6 +446,7 @@ def main() -> None:
             f"selection={float(selection_loss):.5f}"
         )
         if float(selection_loss) < best_loss - 1e-5:
+            # CPU snapshots avoid retaining a live graph or unnecessary device memory.
             best_loss, stale = float(selection_loss), 0
             best_state = {key: value.detach().cpu().clone() for key, value in head.state_dict().items()}
         else:
@@ -449,12 +467,14 @@ def main() -> None:
             calibration_logits = head(calibration_x)
             calibration_labels = calibration_y
         else:
+            # Legacy three-way datasets explicitly fall back to validation calibration.
             calibration_logits = clean_logits
             calibration_labels = val_y
         if calibration_x is None and robust_val_x is not None and robust_val_y is not None:
             calibration_logits = torch.cat((clean_logits, head(robust_val_x)))
             calibration_labels = torch.cat((val_y, robust_val_y))
     temperature = fit_temperature(calibration_logits, calibration_labels)
+    # Threshold fitting uses calibration labels and never reserved-test labels.
     calibration_probabilities = torch.sigmoid(calibration_logits / temperature)
     threshold = select_threshold(calibration_labels, calibration_probabilities, args.threshold_objective)
     metrics = classification_metrics(val_y, torch.sigmoid(clean_logits / temperature), threshold)
@@ -477,6 +497,7 @@ def main() -> None:
         with torch.no_grad():
             test_metrics = classification_metrics(test_y, torch.sigmoid(head(test_x) / temperature), threshold)
     metadata = {
+        # Store enough provenance to audit and reproduce the deployable head.
         "train_images": len(train_rows),
         "diverse_train_images": training_original_count - len(train_rows),
         "diverse_cache": str(args.diverse_cache) if args.diverse_cache else None,

@@ -7,7 +7,7 @@ from pathlib import Path
 import torch
 from PIL import Image
 
-from aigc_detector.e5 import (
+from aigc_detector.experiments.e5 import (
     QUALITY_FEATURE_NAMES,
     fit_binned_thresholds,
     fit_continuous_threshold,

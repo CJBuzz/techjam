@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 
-from aigc_detector.e1c import (
+from aigc_detector.experiments.e1c import (
     ENSEMBLE_MODES,
     aggregate_checkpoint_views,
     blend_calibrated_logits,

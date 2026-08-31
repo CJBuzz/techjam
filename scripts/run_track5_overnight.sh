@@ -222,10 +222,10 @@ preflight() {
 
   local evaluate_help stream_help train_help response_extract_help response_train_help
   evaluate_help="$(uv run --frozen python -m aigc_detector.evaluate --help)"
-  stream_help="$(uv run --frozen python -m aigc_detector.streaming_cache --help)"
+  stream_help="$(uv run --frozen python -m aigc_detector.tooling.streaming_cache --help)"
   train_help="$(uv run --frozen python -m aigc_detector.train --help)"
-  response_extract_help="$(uv run --frozen python -m aigc_detector.response extract --help)"
-  response_train_help="$(uv run --frozen python -m aigc_detector.response train --help)"
+  response_extract_help="$(uv run --frozen python -m aigc_detector.analysis.response extract --help)"
+  response_train_help="$(uv run --frozen python -m aigc_detector.analysis.response train --help)"
   grep -q -- '--output-dir' <<<"$evaluate_help"
   grep -q -- '--tta' <<<"$evaluate_help"
   grep -q -- '--response-model' <<<"$evaluate_help"
@@ -254,7 +254,7 @@ preflight() {
   if (( cache_status != 0 )); then
     echo "E1 cache action: incompatible cache will be backed up before production run"
   fi
-  uv run --frozen python -c 'import aigc_detector.evaluate, aigc_detector.streaming_cache, aigc_detector.train, aigc_detector.response'
+  uv run --frozen python -c 'import aigc_detector.evaluate, aigc_detector.tooling.streaming_cache, aigc_detector.train, aigc_detector.analysis.response'
   if [[ "$DEVICE" == "mps" ]]; then
     uv run --frozen python -c 'import torch; assert torch.backends.mps.is_available(), "DEVICE=mps but MPS is unavailable"'
     echo "MPS availability: PASS"
@@ -277,7 +277,7 @@ case "${1:-}" in
     preflight 1
     uv run --frozen python -m unittest tests.test_streaming_cache tests.test_tta tests.test_response
     SMOKE_CACHE="$TRACK5_ROOT/smoke/$RUN_ID/stream_cache"
-    uv run --frozen python -m aigc_detector.streaming_cache \
+    uv run --frozen python -m aigc_detector.tooling.streaming_cache \
       --output-dir "$SMOKE_CACHE" --dataset OwensLab/CommunityForensics-Small --split train \
       --real-count 10 --fake-count 10 --max-fake-per-model 5 --max-real-per-source 10 \
       --robust-views 1 --seed 42 --buffer-size 64 --batch-size 4 \
@@ -455,7 +455,7 @@ PY
 
 build_e1_cache() {
   prepare_e1_cache
-  uv run --frozen python -m aigc_detector.streaming_cache \
+  uv run --frozen python -m aigc_detector.tooling.streaming_cache \
     --output-dir "$E1_STREAM_CACHE" \
     --dataset OwensLab/CommunityForensics-Small --split train \
     --real-count "$REAL_COUNT" --fake-count "$FAKE_COUNT" \
@@ -508,14 +508,14 @@ fi
 
 run_e3() {
   [[ -s "$E1_MODEL" ]] || { echo "Required E1 checkpoint missing: $E1_MODEL" >&2; return 1; }
-  uv run --frozen python -m aigc_detector.response extract \
+  uv run --frozen python -m aigc_detector.analysis.response extract \
     --data-dir "$LOCAL_DATA_DIR" --base-checkpoint "$E1_MODEL" --output "$E3_FEATURES" \
     --augmentation-repeats 2 --validation-fraction 0.15 --test-fraction 0.15 \
     --batch-size "$FEATURE_BATCH_SIZE" --seed 42 --device "$DEVICE"
   if checkpoint_has_key "$E3_MODEL" state_dict; then
     echo "[$(timestamp)] Reusing E3 response model: $E3_MODEL"
   elif [[ ! -e "$E3_MODEL" ]]; then
-    uv run --frozen python -m aigc_detector.response train \
+    uv run --frozen python -m aigc_detector.analysis.response train \
       --cache "$E3_FEATURES" --output "$E3_MODEL" --hidden-dim 32 --batch-size 128 \
       --epochs 50 --patience 8 --learning-rate 0.001 --seed 42
   else
@@ -541,13 +541,13 @@ run_external() {
   [[ -d "$EXTERNAL_DATA" ]] || { echo "Missing existing external dataset: $EXTERNAL_DATA"; return 1; }
   mkdir -p "$EXTERNAL_ROOT/original" "$EXTERNAL_ROOT/e1"
   if [[ ! -s "$EXTERNAL_ROOT/original/summary.json" ]]; then
-    uv run --frozen python -m aigc_detector.evaluate_external \
+    uv run --frozen python -m aigc_detector.analysis.evaluate_external \
       --data-dir "$EXTERNAL_DATA" --checkpoint "$ORIGINAL_CHECKPOINT" \
       --output-dir "$EXTERNAL_ROOT/original" --batch-size "$EVAL_BATCH_SIZE" \
       --device "$EXTERNAL_DEVICE"
   fi
   if [[ ! -s "$EXTERNAL_ROOT/e1/summary.json" ]]; then
-    uv run --frozen python -m aigc_detector.evaluate_external \
+    uv run --frozen python -m aigc_detector.analysis.evaluate_external \
       --data-dir "$EXTERNAL_DATA" --checkpoint "$E1_MODEL" \
       --output-dir "$EXTERNAL_ROOT/e1" --batch-size "$EVAL_BATCH_SIZE" \
       --device "$EXTERNAL_DEVICE"

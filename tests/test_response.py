@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from aigc_detector.response import (
+from aigc_detector.analysis.response import (
     RESPONSE_FEATURE_DIM,
     ResponseHead,
     perturbation_views,

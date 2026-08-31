@@ -56,7 +56,7 @@ Fallback 40K prediction:
 
 Provisional ensemble prediction:
 
-    python -m aigc_detector.predict_ensemble PATH_TO_IMAGES --policy ensemble_candidate/policy.json --output predictions.json --device cuda
+    python -m aigc_detector.experiments.predict_ensemble PATH_TO_IMAGES --policy ensemble_candidate/policy.json --output predictions.json --device cuda
 
 The ensemble policy was selected on development data and must be regenerated
 after adding the WildFake per-image predictions. Preserve the 40K checkpoint as

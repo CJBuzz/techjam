@@ -47,7 +47,7 @@ timestamp() { date '+%Y-%m-%d %H:%M:%S %Z'; }
 
 json_valid() {
   local path="$1" stage="$2"
-  [[ -f "$path" ]] && .venv/bin/python -m aigc_detector.phase2 validate-artifact --path "$path" --stage "$stage" >/dev/null 2>&1
+  [[ -f "$path" ]] && .venv/bin/python -m aigc_detector.experiments.phase2 validate-artifact --path "$path" --stage "$stage" >/dev/null 2>&1
 }
 
 e7_completion_valid() {
@@ -157,7 +157,7 @@ stage_9() {
     --modes radial_only fused_radial clip_radial --device "$DEVICE" \
     --feature-batch-size "$FEATURE_BATCH_SIZE" --batch-size "$HEAD_BATCH_SIZE" --seed "$SEED"
 }
-stage_10() { .venv/bin/python -m aigc_detector.phase2 aggregate --track5-root "$TRACK5_ROOT"; }
+stage_10() { .venv/bin/python -m aigc_detector.experiments.phase2 aggregate --track5-root "$TRACK5_ROOT"; }
 
 run_stage() {
   local stage="$1" title="$2" log="$LOG_DIR/stage_${stage}.log"

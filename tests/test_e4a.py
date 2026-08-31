@@ -4,7 +4,7 @@ from pathlib import Path
 
 import torch
 
-from aigc_detector.e4a import (
+from aigc_detector.experiments.e4a import (
     FEATURE_BLOCKS,
     MODALITY_SUBSETS,
     modality_indices,
