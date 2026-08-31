@@ -367,16 +367,13 @@ paths and are not native-Windows checks.
 
 ## Team contributions
 
-This summary follows the Git history; team members should verify the wording
-before the final Devpost submission.
-
 | Team member | Repository contribution |
 |---|---|
-| See Jay | Core detector, robustness training, Kaggle workflow, and external evaluation |
+| See Jay | Core detector, robustness training, and external evaluation |
 | Xuan Shan | Scaled 40K/100K training, GPU handoff, benchmarking, and documentation |
 | Max | Phase-two/phase-three research experiments and validation tooling |
 | Xinnan | FFT experiments and early detector implementation |
-| Yu Bin | Dashboard/inference workflow and evaluation reporting |
+| Yu Bin | Dashboard/inference workflow, evaluation reporting, and demo video |
 
 ## Submission checklist
 
@@ -398,7 +395,3 @@ before the final Devpost submission.
    Advanced images. If any demonstration image entered train, model-selection,
    or calibration, this checkpoint is not challenge-compliant and must not be
    submitted.
-2. Commit and push `artifacts/diverse_initialized_40k_calibrated.pt`, the
-   dashboard, reorganized package, tests, lockfile, and documentation.
-3. Verify the contribution table with every team member, then add the public
-   repository and three-minute YouTube links to Devpost.
