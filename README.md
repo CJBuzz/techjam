@@ -219,6 +219,12 @@ uv run aigc-predict path/to/images \
 
 The output is a JSON array of records with exactly `image_path` and calibrated AIGC probability `pred` fields.
 
+A compatible two-checkpoint ensemble can be selected on named external
+development datasets with `aigc-select-ensemble` and served with
+`aigc-predict-ensemble`. See `docs/ENSEMBLE_SELECTION.md`. Development datasets
+used to choose its weights or threshold must not subsequently be reported as
+untouched final tests.
+
 ## Quick classification demo
 
 Use the cached untouched test features to show several correct examples from each
