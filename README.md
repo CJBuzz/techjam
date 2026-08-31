@@ -356,14 +356,18 @@ paths and are not native-Windows checks.
 
 ## Limitations and future improvements
 
-- Build a properly licensed generator- and real-source-disjoint WildFake split;
-  random same-source splits cannot establish unseen-generator performance.
+- Build a properly licensed generator- and real-source-disjoint WildFake split.
+  This is because random same-source splits cannot establish unseen-generator
+  performance.
 - Compare global resize with validation-only texture-crop aggregation for
   eligible high-resolution images, retaining global resize for small images.
 - Investigate fine-tuning only the final EfficientNet block after a frozen
   generator-held-out baseline justifies the added compute.
 - Expand error review by generator, source, resolution, subject matter, and
   exact transformation before setting moderation policies.
+- Train over a larger dataset. Current training efforts only went up to
+  100k images due to limited compute and time. Training the model on larger
+  volume and more diverse data may increase robustness.  
 
 ## Team contributions
 
