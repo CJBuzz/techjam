@@ -337,7 +337,21 @@ COCO/DALL-E subset for training.
 Frozen ImageNet EfficientNet was not pretrained specifically on Laplacian or FFT inputs, and high-frequency evidence remains vulnerable to redistribution. CLIP can learn content or dataset bias. Temperature calibration cannot repair domain shift. A stronger version should fine-tune the last EfficientNet block on a diverse high-resolution corpus, measure per-generator generalization, tune thresholds for moderation costs, and include representative false-positive/false-negative analysis.
 ## Directory prediction
 
-Run the front-end batch prediction script with a trained checkpoint:
+Put images for the dashboard in `images/`, then run:
+
+```bash
+./infer.sh
+```
+
+This uses `artifacts/robust_laplacian_fft.pt` by default and writes `output.json`.
+The dashboard reads that JSON and loads the referenced images; it does not run
+model inference itself. Arguments can override the defaults:
+
+```bash
+./infer.sh path/to/images artifacts/model.pt output.json
+```
+
+The equivalent direct command is:
 
 ```bash
 uv run python scripts/predict_directory.py path/to/images \

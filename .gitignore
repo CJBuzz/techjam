@@ -24,6 +24,7 @@ dist/
 data/
 artifacts/
 predictions.json
+output.json
 
 # Logs and temporary files
 *.log
