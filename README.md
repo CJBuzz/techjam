@@ -10,6 +10,29 @@ The model stays far below the 2-billion-parameter limit and feature caching make
 uv sync
 ```
 
+## Web UI for Testing
+
+Once you have trained a model and saved it to the `artifacts/` directory, launch the interactive Streamlit web interface:
+
+```bash
+uv run streamlit run app.py
+```
+
+The UI provides a simple interface to:
+- **Upload an image** (JPG, PNG, WebP, etc.)
+- **Run inference** using all available trained models
+- **Ensemble predictions** from multiple models (if available)
+- **View results** with confidence scores and visualizations
+- **Understand predictions** with detailed model information
+
+The UI automatically detects all `.pt` checkpoint files in the `artifacts/` directory and loads them on startup. If you have trained multiple models, it will offer to ensemble their predictions for more robust results.
+
+### Example workflow:
+1. Train a model: `uv run aigc-train --data-dir data/cifake_smoke --output artifacts/hybrid_detector.pt ...`
+2. Launch UI: `uv run streamlit run app.py`
+3. Open http://localhost:8501 in your browser
+4. Upload test images and see real-time predictions
+
 Training data must use this layout (folder aliases `fake`, `aigc`, and `authentic` are also accepted):
 
 ```text
