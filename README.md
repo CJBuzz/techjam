@@ -97,6 +97,18 @@ data/my_dataset/
 
 Do not use the challenge's COCO val2017 / DALL-E Advanced demonstration set for training.
 
+### Local WildFake demonstration corpus
+
+`data/wildfake` is available locally only as an external-validation corpus. It contains COCO
+val2017 real images and DALL·E 3 Advanced synthetic images in the supplied WildFake hierarchy,
+not the detector's standard `real/` + `ai/` layout. Never add it to a training,
+model-selection, calibration, or persisted mixed-corpus split.
+
+Use [`scripts/evaluate_wildfake_external.py`](scripts/evaluate_wildfake_external.py) for a
+locked-checkpoint, clearly labelled stress check. The adapter writes an integrity manifest and
+refuses decoded-pixel duplicates; keep its reports separate from the reserved in-domain test and
+from official generator-held-out WildFake experiments.
+
 ## 100-image smoke test
 
 Download 50 real and 50 AI-generated CIFAKE images, then train the frozen hybrid model:
