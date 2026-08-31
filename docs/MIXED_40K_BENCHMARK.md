@@ -87,18 +87,34 @@ the class label, but the high same-source scores still do not establish
 generalization to unseen generators or realistic competition image
 distributions.
 
-The calibrated checkpoint, threshold, and preprocessing should now be frozen.
-The next scientifically useful measurement is the untouched reserved test,
-followed by the B-Free FLUX and Stable Diffusion 3.5 benchmark under the protocol
-in `docs/GENERALIZATION_PROTOCOL.md`. Results from those sets must not be used to
-retune this checkpoint if they are to remain final-test evidence.
+The calibrated checkpoint, threshold, and preprocessing were frozen before the
+reserved test was opened. The exact 6,000-image reserved split then produced:
+
+| Reserved-test metric | Result |
+|---|---:|
+| Clean accuracy / balanced accuracy | 98.62% |
+| Clean ROC-AUC | 99.91% |
+| Clean fake recall | 99.23% |
+| Clean real false-positive rate | 2.00% |
+| Mean accuracy across all 16 cells | 96.13% |
+| Worst accuracy | 90.85% (resize 0.25) |
+| Mean ROC-AUC across all 16 cells | 99.41% |
+| Worst ROC-AUC | 97.76% (resize 0.25) |
+
+The complete locked report is stored in
+`artifacts/mixed_40k/reserved_test_severity.json`. This is valid held-out
+same-source evidence for the 40K checkpoint only. It is not valid for the 100K
+checkpoint because 4,190 of these rows occur in that model's training split.
+
+The official GenImage GLIDE comparison in
+`docs/GENIMAGE_GLIDE_EVALUATION.md` separately measures unseen-generator
+generalization. Since both checkpoints were compared on GLIDE, GLIDE is now a
+model-selection benchmark rather than an untouched final test.
 
 ## Provisional 100K checkpoint compatibility comparison
 
-The unpacked Kaggle checkpoint
-`artifacts/mixed_100k_balanced_consistency_w01_mixed_calibrated` was restored to
-the loadable file
-`artifacts/mixed_100k_balanced_consistency_w01_mixed_calibrated.pt`. It contains
+The downloaded mixed-100K checkpoint is stored at
+`artifacts/mixed_100k_balanced_consistency_w01_mixed_calibrated/mixed_100k_balanced_consistency_w01_mixed_calibrated.pt`. It contains
 the trained Laplacian + FFT fusion-head weights, temperature 0.77410257, and
 embedded validation metadata. Because it does not store a selected balanced
 threshold, evaluation preserves its default threshold of 0.5.
@@ -120,13 +136,14 @@ points), blur sigma 2.0 (+1.58 points), and resize 0.5 (+1.48 points). The full
 diagnostic output is stored in
 `artifacts/mixed_100k_on_mixed_40k_model_selection_severity.json`.
 
-This comparison is **not an uncontaminated held-out benchmark**. The local copy
-does not include the mixed-100K split manifest, so exact hashes and duplicate
-groups cannot be checked against the 40K evaluation rows. Both corpora were
-sampled from CIFAKE and SID_Set, and some or all of the 40K model-selection
-images may have appeared in the 100K training data. The numbers establish that
-the restored weights load correctly and are operationally stronger on this
-shared-source diagnostic set; they must not be used as evidence of
-cross-generator generalization. A fair model-selection comparison requires the
-original mixed-100K manifest, and final generalization evidence still requires
-the untouched B-Free evaluation.
+This comparison is **training-contaminated and is not a held-out benchmark**.
+The downloaded mixed-100K manifest confirms by exact content SHA-256 that all
+40,000 mixed-40K originals occur in the 100K corpus. Of the 40K evaluation
+rows, 2,838 model-selection images and 4,190 reserved-test images were assigned
+to training in the 100K experiment.
+
+These numbers establish only that the restored weights load correctly and score
+well on this shared-source diagnostic set. They must not be used to claim a
+held-out gain over the 40K checkpoint. The first fair common external comparison
+is the official GenImage GLIDE evaluation documented in
+`docs/GENIMAGE_GLIDE_EVALUATION.md`.

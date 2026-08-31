@@ -6,12 +6,13 @@ import json
 from pathlib import Path
 
 import numpy as np
+from sklearn.metrics import average_precision_score
 
 
 def _source(path: str | Path, data_dir: Path) -> str:
     parts = Path(path).resolve().relative_to(data_dir.resolve()).parts
-    if len(parts) < 3 or parts[0].lower() not in {"real", "fake"}:
-        raise ValueError(f"Expected path below real/<source> or fake/<source>: {path}")
+    if len(parts) < 3 or parts[0].lower() not in {"real", "fake", "ai", "aigc", "synthetic", "generated"}:
+        raise ValueError(f"Expected path below a labeled class/<source> directory: {path}")
     return parts[1]
 
 
@@ -47,6 +48,7 @@ def _metrics(
         balanced_accuracy = negative_recall
 
     auc = None
+    average_precision = None
     if set(np.unique(labels)) == {0, 1}:
         order = np.argsort(probabilities, kind="mergesort")
         ranks = np.empty(len(probabilities), dtype=float)
@@ -64,8 +66,10 @@ def _metrics(
             (ranks[positives].sum() - positive_count * (positive_count + 1) / 2)
             / (positive_count * negative_count)
         )
+        average_precision = float(average_precision_score(labels, probabilities))
     return {
         "roc_auc": auc,
+        "average_precision": average_precision,
         "balanced_accuracy": float(balanced_accuracy),
         "accuracy": float((true_positive + true_negative) / len(labels)),
         "precision": float(precision),
