@@ -87,6 +87,29 @@ uv run aigc-evaluate \
 uv sync
 ```
 
+## Web UI for Testing
+
+Once you have trained a model and saved it to the `artifacts/` directory, launch the interactive Streamlit web interface:
+
+```bash
+uv run streamlit run app.py
+```
+
+The UI provides a simple interface to:
+- **Upload an image** (JPG, PNG, WebP, etc.)
+- **Run inference** using all available trained models
+- **Ensemble predictions** from multiple models (if available)
+- **View results** with confidence scores and visualizations
+- **Understand predictions** with detailed model information
+
+The UI automatically detects all `.pt` checkpoint files in the `artifacts/` directory and loads them on startup. If you have trained multiple models, it will offer to ensemble their predictions for more robust results.
+
+### Example workflow:
+1. Train a model: `uv run aigc-train --data-dir data/cifake_smoke --output artifacts/hybrid_detector.pt ...`
+2. Launch UI: `uv run streamlit run app.py`
+3. Open http://localhost:8501 in your browser
+4. Upload test images and see real-time predictions
+
 Training data must use this layout (folder aliases `fake`, `aigc`, and `authentic` are also accepted):
 
 ```text
@@ -452,3 +475,36 @@ COCO/DALL-E subset for training.
 ## Limitations and future work
 
 Frozen ImageNet EfficientNet was not pretrained specifically on Laplacian or FFT inputs, and high-frequency evidence remains vulnerable to redistribution. CLIP can learn content or dataset bias. Temperature calibration cannot repair domain shift. A stronger version should fine-tune the last EfficientNet block on a diverse high-resolution corpus, measure per-generator generalization, tune thresholds for moderation costs, and include representative false-positive/false-negative analysis.
+## Directory prediction
+
+Put images for the dashboard in `images/`, then run:
+
+```bash
+./infer.sh
+```
+
+This uses `artifacts/robust_laplacian_fft.pt` by default and writes `output.json`.
+The dashboard reads that JSON and loads the referenced images; it does not run
+model inference itself. Arguments can override the defaults:
+
+```bash
+./infer.sh path/to/images artifacts/model.pt output.json
+```
+
+The equivalent direct command is:
+
+```bash
+uv run python scripts/predict_directory.py path/to/images \
+  --checkpoint artifacts/model.pt \
+  --output predictions.json
+```
+
+The output is a JSON array containing one record per readable image:
+
+```json
+[
+  {"image_path": "path/to/images/example.jpg", "pred": 0.9374}
+]
+```
+
+`pred` is the calibrated likelihood that the image is AIGC-generated.
