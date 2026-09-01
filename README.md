@@ -422,15 +422,3 @@ command are recorded in
 | Xinnan | FFT experiments and early detector implementation |
 | Yu Bin | Dashboard/inference workflow, evaluation reporting, and demo video |
 
-## Submission checklist
-
-- Working inference produces the exact `image_path` / `pred` JSON contract.
-- The dashboard visualizes that JSON and the corresponding images end to end.
-- The selected checkpoint is visible to Git and all required code is present.
-- Code is separated into production and experimental paths and comments explain
-  the non-obvious technical decisions.
-- This README documents setup, architecture, reproduction, results, limitations,
-  and repository structure.
-- The Devpost written description, robustness summary, and error-analysis draft
-  are maintained locally under the ignored `deliverables/` directory.
-- The public three-minute YouTube demo video remains an event-level deliverable.
